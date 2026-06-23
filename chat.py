@@ -59,7 +59,8 @@ class RateLimited(Exception):
 
 def call_claude(png: Path, resume: str | None) -> dict:
     cmd = ["claude", "-p", "--output-format", "json",
-           "--permission-mode", "bypassPermissions", "--allowedTools", "Read",
+           "--permission-mode", "bypassPermissions",
+           "--allowedTools", "Read,WebSearch,WebFetch",
            "--append-system-prompt", PERSONA]
     if resume:
         cmd += ["--resume", resume]

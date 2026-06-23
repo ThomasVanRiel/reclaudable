@@ -54,8 +54,10 @@ Not a per-notebook folder: a git-like blob store. Data dir
   Registered; token in `~/.config/rmapi/rmapi.conf`. Non-interactive: `rmapi -ni …`.
 
 ## Gotchas when editing
-- **Reply text must be PLAIN prose** — the renderer prints markdown markers
-  (`#`,`-`,`*`) literally. `writeback` strips/wraps; persona enforces plain text.
+- **Reply text is prose + lists, not full markdown** — `writeback` converts
+  `-`/`*` bullets → `•` and lets `1.` ordered lists through (they render fine),
+  but headings (`#`), bold (`**`), tables, and backticks render literally and
+  look broken. `writeback` strips those; the persona bans them and allows lists.
 - **Reply margins:** canvas is centred, x∈[-702,+702] for the 1404px-wide page.
   `writeback.POS_X=-585, WIDTH=1209` (left margin 117px, right 78px); `WRAP_WIDTH=76`.
 - **Length is fine** — reMarkable pages scroll vertically; only horizontal width is
