@@ -22,11 +22,11 @@ import uuid
 import zipfile
 from pathlib import Path
 
+from config import CLAUDE_FOLDER  # host config; see .env
 from render import rm_to_png  # noqa: F401  (handy for debugging)
 
 HERE = Path(__file__).parent
 RMAPI = str(HERE / "bin" / "rmapi")
-CLAUDE_FOLDER = "Claude"
 
 
 def _rmapi(*args: str, check: bool = True) -> subprocess.CompletedProcess:

@@ -1,4 +1,4 @@
-"""rm-llm turn driver: read newest page in a Claude-folder notebook, get Claude's
+"""reclaudable turn driver: read newest page in a Claude-folder notebook, get Claude's
 reply, append it as a new page.
 
   python chat.py [notebook-uuid]
@@ -20,29 +20,28 @@ from pathlib import Path
 
 import rmstore as R
 import writeback as W
+from config import CLAUDE_FOLDER, CLAUDE_CWD, MODEL_LABEL  # host config; see .env
 
 HERE = Path(__file__).parent
 STATE_DIR = HERE / "state"
 RENDER_DIR = HERE / "renders"
-CLAUDE_FOLDER = "Claude"
 BLANK_RM_MAX_BYTES = 1000   # .rm files smaller than this carry no strokes
 
 # The reMarkable assistant's behaviour — edit persona.md to change it.
 PERSONA = (HERE / "persona.md").read_text().strip()
 
-# Shown in each reply's frame (writeback adds the "model · timestamp" line). Not
-# parsed from the result JSON — keep in sync by hand if the backend model changes.
-MODEL_LABEL = "Claude Opus 4.8"
+# MODEL_LABEL is shown in each reply's frame (writeback adds the "model ·
+# timestamp" line). It is not parsed from the result JSON — set it in .env to
+# match the backend model.
 
 # The reply-Claude emits this (and nothing else) when the page is an unfinished
 # draft or carries no request — so we don't answer a page that synced mid-edit.
 WAIT_SENTINEL = "<<WAIT>>"
 
-# Run the reply-Claude here, OUTSIDE the repo tree, so it never auto-loads this
-# project's CLAUDE.md (coding instructions) as context — only `persona.md` via
-# --append-system-prompt shapes replies. Must be a STABLE path: Claude Code keys
-# resumable sessions by working directory.
-CLAUDE_CWD = Path.home() / ".rm-llm" / "claude-cwd"
+# CLAUDE_CWD (from .env) runs the reply-Claude OUTSIDE the repo tree, so it never
+# auto-loads this project's CLAUDE.md (coding instructions) as context — only
+# `persona.md` via --append-system-prompt shapes replies. It must be a STABLE
+# path: Claude Code keys resumable sessions by working directory.
 
 
 def _state_path(u: str) -> Path:

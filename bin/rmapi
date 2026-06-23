@@ -1,5 +1,19 @@
 #!/bin/sh
-# rmapi wrapper: always target the self-hosted rmfakecloud.
-# Built from source at /home/you/source/rmapi (sync15-capable, juruen/rmapi).
-exec env RMAPI_HOST=https://example.com \
-  /home/you/source/rmapi/rmapi "$@"
+# rmapi wrapper: always target the self-hosted rmfakecloud (sync15-capable,
+# juruen/rmapi). Host and binary path come from ../.env (shared with config.py).
+# We extract only the two keys we need rather than sourcing the file, so values
+# with spaces (e.g. the model label) can't break the shell. An already-set
+# environment variable wins; the defaults below apply if neither is present.
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+
+envval() {  # envval KEY -> value from .env (last match), surrounding quotes stripped
+    [ -f "$DIR/.env" ] || return 0
+    v=$(sed -n "s/^$1=//p" "$DIR/.env" | tail -1)
+    v=${v#\"}; v=${v%\"}; v=${v#\'}; v=${v%\'}
+    printf '%s' "$v"
+}
+
+HOST=${RECLAUDABLE_RMAPI_HOST:-$(envval RECLAUDABLE_RMAPI_HOST)}
+BIN=${RECLAUDABLE_RMAPI_BIN:-$(envval RECLAUDABLE_RMAPI_BIN)}
+exec env RMAPI_HOST="${HOST:-https://example.com}" \
+  "${BIN:-/home/you/source/rmapi/rmapi}" "$@"

@@ -1,4 +1,4 @@
-# rm-llm
+# reclaudable
 
 Chat with Claude by **handwriting on a reMarkable Paper Pro**. Write a page, and a
 typed reply from Claude appears as the next page after your tablet syncs. Annotate
@@ -83,26 +83,34 @@ reply-Claude runs headless with the `Read`, `WebSearch`, and `WebFetch` tools.
 
 ```sh
 sudo apt install libcairo2          # Cairo runtime for cairosvg (Debian/Ubuntu)
-git clone <this-repo> rm-llm && cd rm-llm
+git clone <this-repo> reclaudable && cd reclaudable
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt   # rmc, rmscene, cairosvg
 ```
 
 ## Configuration
 
-Edit these host-specific values for your setup:
+All host-specific values live in a `.env` file (read by `config.py` and the
+`bin/rmapi` wrapper). Copy the template and edit:
 
-| File | Setting | Set to |
-|------|---------|--------|
-| `rmstore.py` | `USER` | your rmfakecloud username |
-| `rmstore.py` | `CONTAINER` | your rmfakecloud Docker container name |
-| `bin/rmapi` | `RMAPI_HOST` | your rmfakecloud URL |
-| `bin/rmapi` | binary path | path to the `rmapi` you built in step 2 |
-| `watcherctl.sh` | `DIR` | the absolute path to this repo |
-| `chat.py` | `MODEL_LABEL` *(optional)* | the model name shown on each reply |
+```sh
+cp .env.example .env
+$EDITOR .env
+```
 
-On the tablet, create a folder named **`Claude`** (case-insensitive) and put your
-chat notebooks inside it.
+| Variable | Set to |
+|----------|--------|
+| `RECLAUDABLE_RM_USER` | your rmfakecloud username |
+| `RECLAUDABLE_CONTAINER` | your rmfakecloud Docker container name |
+| `RECLAUDABLE_RMAPI_HOST` | your rmfakecloud URL |
+| `RECLAUDABLE_RMAPI_BIN` | path to the `rmapi` you built in step 2 |
+| `RECLAUDABLE_FOLDER` *(optional)* | device folder to watch (default `Claude`) |
+| `RECLAUDABLE_MODEL_LABEL` *(optional)* | the model name shown on each reply |
+| `RECLAUDABLE_CLAUDE_CWD` *(optional)* | stable cwd for the headless reply-Claude |
+
+`watcherctl.sh` finds the repo from its own location, so no path needs editing
+there. On the tablet, create a folder named **`Claude`** (case-insensitive, or
+match `RECLAUDABLE_FOLDER`) and put your chat notebooks inside it.
 
 ## Usage
 
@@ -122,7 +130,7 @@ Launch it from a real terminal (not inside a Claude Code session, which would ow
 and kill the process). To restart after a reboot, add a crontab line:
 
 ```
-@reboot /path/to/rm-llm/watcherctl.sh start
+@reboot /path/to/reclaudable/watcherctl.sh start
 ```
 
 Watch what it's doing:

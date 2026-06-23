@@ -1,4 +1,4 @@
-"""Read-only proof of concept for rm-llm.
+"""Read-only proof of concept for reclaudable.
 
 Given a notebook (by UUID, or auto-discovered inside the `claude` folder):
 render its newest page -> PNG -> send to a resumed headless Claude session ->
@@ -19,12 +19,12 @@ import sys
 from pathlib import Path
 
 import rmstore as R
+from config import CLAUDE_FOLDER  # host config; see .env
 from render import rm_bytes_to_png
 
 HERE = Path(__file__).parent
 STATE_DIR = HERE / "state"
 RENDER_DIR = HERE / "renders"
-CLAUDE_FOLDER = "claude"
 
 PERSONA = (
     "You are a handwriting chat/editor assistant on a reMarkable tablet. "

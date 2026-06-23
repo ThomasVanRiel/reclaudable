@@ -1,10 +1,10 @@
 #!/bin/sh
-# rm-llm watcher control: start | stop | status | restart
+# reclaudable watcher control: start | stop | status | restart
 # Manual launch (no systemd/docker). Re-run `start` after a reboot.
 # The watcher itself writes timestamped logs to logs/watcher.log; this script
 # sends any pre-logging crash output to logs/watcher.out.
 set -e
-DIR="/home/you/source/rm-llm"
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)   # repo root = script's dir
 cd "$DIR"
 PYTHON="$DIR/.venv/bin/python3"
 PATTERN="[w]atcher.py"          # bracket avoids matching the pgrep itself

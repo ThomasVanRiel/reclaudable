@@ -19,9 +19,7 @@ import subprocess
 import tarfile
 from dataclasses import dataclass, field
 
-USER = "you"
-CONTAINER = "rmfakecloud"
-SYNC = f"/data/users/{USER}/sync"
+from config import CONTAINER, SYNC  # host-specific; see .env / .env.example
 
 
 def _run(args: list[str]) -> bytes:

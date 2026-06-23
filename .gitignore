@@ -3,6 +3,9 @@
 __pycache__/
 *.pyc
 
+# Local host config (secrets/paths) — template is .env.example
+.env
+
 # Runtime / operational (not source)
 state/
 logs/

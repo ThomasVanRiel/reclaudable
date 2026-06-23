@@ -1,4 +1,4 @@
-# rm-llm — reMarkable Paper Pro × Claude
+# reclaudable — reMarkable Paper Pro × Claude
 
 Handwrite on a reMarkable Paper Pro → chat with Claude / use it as a writing
 editor. Loop: handwrite a page → Claude reads the page image and replies on a new
@@ -35,9 +35,15 @@ Not a per-notebook folder: a git-like blob store. Data dir
   root/generation chain stays consistent.
 
 ## Components
-- `rmstore.py` — read-only sync15 reader (blobs via `docker exec`). Resolves the
-  `Claude` folder, lists its notebooks, `ordered_pages()` returns pages in real
-  `.content` idx order with hashes.
+- `config.py` — central config; loads `.env` (zero-dep parser, see `.env.example`)
+  for host-specific values (rmfakecloud user/container/sync dir, watched folder,
+  model label, `CLAUDE_CWD`, rmapi host/binary). Defaults exist but are author-
+  specific. `bin/rmapi` sources the SAME `.env`. Never hardcode these in the .py.
+- `rmstore.py` — read-only sync15 reader. Blobs come through `docker exec`, but
+  reads are BATCHED: `read_blobs()` streams many blobs in one `tar` exec, so
+  `load_docs()` is ~6 execs (not one `cat` per blob). `load_doc(uuid)` re-reads a
+  single notebook. Resolves the `Claude` folder, lists its notebooks,
+  `ordered_pages()` returns pages in real `.content` idx order with hashes.
 - `render.py` — `.rm` v6 → SVG (`rmc`) → PNG (`cairosvg`). Drives `rmc` **in-process**
   (works whatever the watcher's PATH) and patches `rmc.RM_PALETTE` to add the Paper
   Pro highlight colour (`PenColor.HIGHLIGHT`=9, which 0.3.0 omits → `KeyError`);
@@ -47,14 +53,15 @@ Not a per-notebook folder: a git-like blob store. Data dir
 - `chat.py` — one turn: pick last content page → render → headless Claude
   (`process_notebook`, raises `RateLimited`) → append reply. State in
   `state/<uuid>.json`. The reply persona is loaded from `persona.md` (passed via
-  `--append-system-prompt`); the reply-Claude runs in `CLAUDE_CWD`
-  (`~/.rm-llm/claude-cwd`, outside the repo) so THIS `CLAUDE.md` never enters its
-  context. Don't put the reMarkable persona here — it goes in `persona.md`.
+  `--append-system-prompt`); the reply-Claude runs in `CLAUDE_CWD` (from `.env`,
+  default `~/.reclaudable/claude-cwd`, outside the repo) so THIS `CLAUDE.md` never
+  enters its context. Don't put the reMarkable persona here — it goes in `persona.md`.
 - `watcher.py` — polls `.root.history`; on change runs a turn per `Claude`-folder
   notebook. Logs to `logs/watcher.log`. Launch via `watcherctl.sh`.
-- `bin/rmapi` — wrapper that runs the built `rmapi` (at `/home/you/source/rmapi`,
-  juruen/rmapi, sync 1.5) with `RMAPI_HOST=https://example.com`.
-  Registered; token in `~/.config/rmapi/rmapi.conf`. Non-interactive: `rmapi -ni …`.
+- `bin/rmapi` — wrapper that runs the built `rmapi` (juruen/rmapi, sync 1.5) with
+  `RMAPI_HOST` set. Both the host and the binary path come from `.env`
+  (`RECLAUDABLE_RMAPI_HOST` / `RECLAUDABLE_RMAPI_BIN`). Registered; token in
+  `~/.config/rmapi/rmapi.conf`. Non-interactive: `rmapi -ni …`.
 
 ## Gotchas when editing
 - **Reply text is prose + lists, not full markdown** — `writeback` converts

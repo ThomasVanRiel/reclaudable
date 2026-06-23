@@ -1,4 +1,4 @@
-"""rm-llm watcher: poll the sync store and answer new pages in the Claude folder.
+"""reclaudable watcher: poll the sync store and answer new pages in the Claude folder.
 
 The current root hash (last line of .root.history) changes on every device sync.
 When it changes we reload the store and run a turn on each Claude-folder notebook.
