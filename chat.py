@@ -4,9 +4,12 @@ reply, append it as a new page.
   python chat.py [notebook-uuid]
 
 Per-notebook state in state/<uuid>.json:
-  session_id        - Claude session to --resume (delta = only the new page)
-  generated_pages   - page UUIDs we created (so we never reply to our own output)
-  answered_pages    - user page hashes already answered (idempotency)
+  session_id  - Claude session to --resume (delta = only the new page)
+  handled     - "pageUUID:blobHash" already processed, so we never re-answer a
+                page or reply to our own output
+
+The reply persona lives in persona.md; the reply-Claude runs in an isolated cwd
+(CLAUDE_CWD) so this repo's CLAUDE.md never leaks into its context.
 """
 from __future__ import annotations
 
@@ -24,14 +27,14 @@ RENDER_DIR = HERE / "renders"
 CLAUDE_FOLDER = "Claude"
 BLANK_RM_MAX_BYTES = 1000   # .rm files smaller than this carry no strokes
 
-PERSONA = (
-    "You are a handwriting chat/editor assistant on a reMarkable tablet. The user "
-    "writes a page by hand; your reply becomes the next page. Begin every reply "
-    "with 'Transcription: \"...\"' of the handwritten input so misreads get caught. "
-    "Then answer. Write in PLAIN PROSE — no markdown symbols (#, *, -, backticks), "
-    "since they render literally. Keep the whole reply to about one page: complete "
-    "but bounded (there is no pagination)."
-)
+# The reMarkable assistant's behaviour — edit persona.md to change it.
+PERSONA = (HERE / "persona.md").read_text().strip()
+
+# Run the reply-Claude here, OUTSIDE the repo tree, so it never auto-loads this
+# project's CLAUDE.md (coding instructions) as context — only `persona.md` via
+# --append-system-prompt shapes replies. Must be a STABLE path: Claude Code keys
+# resumable sessions by working directory.
+CLAUDE_CWD = Path.home() / ".rm-llm" / "claude-cwd"
 
 
 def _state_path(u: str) -> Path:
@@ -62,8 +65,9 @@ def call_claude(png: Path, resume: str | None) -> dict:
         cmd += ["--resume", resume]
     prompt = (f"New handwritten page from the user. Read the image at {png} "
               "and respond per your instructions.")
+    CLAUDE_CWD.mkdir(parents=True, exist_ok=True)
     out = subprocess.run(cmd, input=prompt, text=True, capture_output=True,
-                         timeout=300)
+                         timeout=300, cwd=CLAUDE_CWD)
     # claude prints a JSON result even on error; parse it for a clean signal.
     try:
         data = json.loads(out.stdout)
