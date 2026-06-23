@@ -1,0 +1,5 @@
+#!/bin/sh
+# rmapi wrapper: always target the self-hosted rmfakecloud.
+# Built from source at /home/you/source/rmapi (sync15-capable, juruen/rmapi).
+exec env RMAPI_HOST=https://example.com \
+  /home/you/source/rmapi/rmapi "$@"

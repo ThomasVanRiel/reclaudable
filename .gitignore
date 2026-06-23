@@ -1,0 +1,10 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime / operational (not source)
+state/
+logs/
+renders/
+backups/
