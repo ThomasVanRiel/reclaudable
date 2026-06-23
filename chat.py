@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 import rmstore as R
@@ -33,6 +34,10 @@ PERSONA = (HERE / "persona.md").read_text().strip()
 # MODEL_LABEL is shown in each reply's frame (writeback adds the "model ·
 # timestamp" line). It is not parsed from the result JSON — set it in .env to
 # match the backend model.
+
+# Label on pages we write to report a failed turn — distinct from a real reply,
+# and written directly (bypasses the model, so no extra cost).
+ERROR_LABEL = "reclaudable error"
 
 # The reply-Claude emits this (and nothing else) when the page is an unfinished
 # draft or carries no request — so we don't answer a page that synced mid-edit.
@@ -133,38 +138,75 @@ def process_notebook(nb: R.Doc) -> bool:
         return False
 
     print(f"{nb.visible_name!r}: responding to page {page_uuid}")
-    RENDER_DIR.mkdir(exist_ok=True)
-    png = RENDER_DIR / f"{nb.uuid}.png"
-    rm_bytes_to_png(R.read_blob(page_hash), png)
+    try:
+        RENDER_DIR.mkdir(exist_ok=True)
+        png = RENDER_DIR / f"{nb.uuid}.png"
+        rm_bytes_to_png(R.read_blob(page_hash), png)
 
-    result = call_claude(png, state.get("session_id"))
-    reply = result.get("result", "").strip()
+        result = call_claude(png, state.get("session_id"))
+        reply = result.get("result", "").strip()
 
-    # The page isn't a request yet (unfinished draft, or no ask) — don't reply.
-    # Mark this hash handled so we don't re-read it until the page changes; leave
-    # session_id untouched so the ephemeral skip stays out of the conversation.
-    if reply.upper().startswith(WAIT_SENTINEL):
-        print(f"{nb.visible_name!r}: page not a request yet — waiting for a trigger.")
+        # The page isn't a request yet (unfinished draft, or no ask) — don't reply.
+        # Mark this hash handled so we don't re-read it until the page changes; leave
+        # session_id untouched so the ephemeral skip stays out of the conversation.
+        if reply.upper().startswith(WAIT_SENTINEL):
+            print(f"{nb.visible_name!r}: page not a request yet — waiting for a trigger.")
+            state["handled"].append(key)
+            save_state(nb.uuid, state)
+            return False
+
+        print("\n----- reply -----\n" + reply + "\n-----------------")
+
+        W.append_page(nb.uuid, reply, folder=CLAUDE_FOLDER,
+                      visible_name=nb.visible_name, model_label=MODEL_LABEL)
+
+        # record the answered page AND our freshly-created page so neither retriggers.
+        state["session_id"] = result.get("session_id")
         state["handled"].append(key)
+        _record_created_page(nb.uuid, state)
         save_state(nb.uuid, state)
+        print(f"done. cost ${result.get('total_cost_usd', 0):.4f}")
+        return True
+    except RateLimited:
+        raise   # transient: let the watcher back off and retry this page later
+    except Exception as err:
+        print(f"{nb.visible_name!r}: failed to answer page:\n{traceback.format_exc()}")
+        _surface_error(nb, state, key, err)
         return False
 
-    print("\n----- reply -----\n" + reply + "\n-----------------")
 
-    W.append_page(nb.uuid, reply, folder=CLAUDE_FOLDER,
-                  visible_name=nb.visible_name, model_label=MODEL_LABEL)
-
-    # record the answered page AND our freshly-created page so neither retriggers.
-    state["session_id"] = result.get("session_id")
-    state["handled"].append(key)
-    fresh_doc = R.load_doc(nb.uuid)             # one notebook, not a full store scan
+def _record_created_page(uuid: str, state: dict) -> None:
+    """Mark the page we just appended as handled, so the watcher never reads our
+    own output back as new input. Re-reads one notebook, not the whole store."""
+    fresh_doc = R.load_doc(uuid)
     fresh = R.ordered_pages(fresh_doc) if fresh_doc else []
     if fresh:
         np_uuid, np_hash = fresh[-1]
         state["handled"].append(f"{np_uuid}:{np_hash}")
+
+
+def _error_message(err: Exception) -> str:
+    first = next((ln for ln in str(err).splitlines() if ln.strip()), "")
+    detail = (first or err.__class__.__name__).strip()[:200]
+    return ("I couldn't finish answering this page — something broke on my end:\n\n"
+            f"{detail}\n\n"
+            "Nothing you wrote was lost. Edit or rewrite the page to try again "
+            "(that re-triggers me), or check the watcher log if it keeps happening.")
+
+
+def _surface_error(nb: R.Doc, state: dict, key: str, err: Exception) -> None:
+    """Write a short failure notice as a new page so the error shows on the device,
+    not just in the log. Mark the offending page handled so a deterministic failure
+    doesn't loop — the user re-triggers by editing the page. RateLimited never gets
+    here (it's re-raised for backoff/retry); this is for terminal failures."""
+    state["handled"].append(key)
+    try:
+        W.append_page(nb.uuid, _error_message(err), folder=CLAUDE_FOLDER,
+                      visible_name=nb.visible_name, model_label=ERROR_LABEL)
+        _record_created_page(nb.uuid, state)
+    except Exception:
+        print(f"{nb.visible_name!r}: could not write error page:\n{traceback.format_exc()}")
     save_state(nb.uuid, state)
-    print(f"done. cost ${result.get('total_cost_usd', 0):.4f}")
-    return True
 
 
 if __name__ == "__main__":
