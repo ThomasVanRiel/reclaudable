@@ -156,6 +156,10 @@ storage model, and gotchas). `persona.md` is the reply assistant's prompt.
 
 ## Notes & limits
 
+- **Expect a wait per page.** A turn runs through the whole toolchain — sync detect,
+  render, the LLM call (the slow part), write-back, and sync again — so replies are
+  not instant. In practice this averages around **3 minutes per page**. The persona
+  is tuned to write thorough, self-contained replies to make each slow round count.
 - **Backend is the Pro subscription**, so heavy use can hit a session limit
   (`429 · session limit · resets …`). The watcher backs off and retries; the turn
   completes once the limit resets. Usage is light by design (a few pages per chat).
