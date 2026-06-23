@@ -38,7 +38,10 @@ Not a per-notebook folder: a git-like blob store. Data dir
 - `rmstore.py` — read-only sync15 reader (blobs via `docker exec`). Resolves the
   `Claude` folder, lists its notebooks, `ordered_pages()` returns pages in real
   `.content` idx order with hashes.
-- `render.py` — `.rm` v6 → SVG (`rmc`) → PNG (`cairosvg`).
+- `render.py` — `.rm` v6 → SVG (`rmc`) → PNG (`cairosvg`). Drives `rmc` **in-process**
+  (works whatever the watcher's PATH) and patches `rmc.RM_PALETTE` to add the Paper
+  Pro highlight colour (`PenColor.HIGHLIGHT`=9, which 0.3.0 omits → `KeyError`);
+  also silences rmscene's "unread block" warning so it doesn't fill the log.
 - `writeback.py` — text → `.rm` (via **rmscene** directly, custom margins) →
   patch `.content` (append page, next idx, `pageCount`/`uuids`) → `rmapi` rm+put.
 - `chat.py` — one turn: pick last content page → render → headless Claude
