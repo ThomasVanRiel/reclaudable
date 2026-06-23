@@ -13,8 +13,10 @@ This module is strictly read-only. Write-back is a separate concern.
 """
 from __future__ import annotations
 
+import io
 import json
 import subprocess
+import tarfile
 from dataclasses import dataclass, field
 
 USER = "you"
@@ -32,6 +34,31 @@ def _run(args: list[str]) -> bytes:
 def read_blob(h: str) -> bytes:
     """Raw bytes of the blob named by hash `h`."""
     return _run(["cat", f"{SYNC}/{h}"])
+
+
+# Container exec startup dominates (~55ms each), so reading N blobs as N
+# `cat`s costs N execs. Stream them all through ONE `tar` instead and split the
+# archive in-process: O(1) execs for the whole store. Chunked so the argv stays
+# well under ARG_MAX even with the full ~530-blob store.
+_BLOB_BATCH = 400
+
+
+def read_blobs(hashes: list[str]) -> dict[str, bytes]:
+    """Raw bytes for many blobs, keyed by hash, in O(1) docker execs per chunk.
+    Every hash must name an existing blob (tar fails on a missing member)."""
+    out: dict[str, bytes] = {}
+    for i in range(0, len(hashes), _BLOB_BATCH):
+        chunk = hashes[i:i + _BLOB_BATCH]
+        if not chunk:
+            continue
+        archive = _run(["tar", "cf", "-", "-C", SYNC, *chunk])
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r") as tf:
+            for m in tf.getmembers():
+                if m.isfile():
+                    f = tf.extractfile(m)
+                    if f is not None:
+                        out[m.name.lstrip("./")] = f.read()
+    return out
 
 
 def current_root() -> str:
@@ -73,26 +100,48 @@ def _parse_listing(blob: bytes) -> list[list[str]]:
 
 
 def load_docs(populate_meta: bool = True) -> dict[str, Doc]:
-    """Map docUUID -> Doc for the whole store (cheap: root + per-doc index reads)."""
+    """Map docUUID -> Doc for the whole store. Reads every blob it needs in two
+    batched `tar` execs (all index blobs, then all metadata blobs) rather than
+    one `cat` per blob — ~1000 execs/59s collapses to a few seconds."""
     root = read_blob(current_root())
+    entries = _parse_listing(root)  # hash : type : docUUID : subfiles : size
+    index_blobs = read_blobs([p[0] for p in entries])
+
     docs: dict[str, Doc] = {}
-    for parts in _parse_listing(root):
-        # hash : type : docUUID : subfiles : size
-        h, _typ, uuid = parts[0], parts[1], parts[2]
-        idx = _parse_listing(read_blob(h))
+    for parts in entries:
+        h, uuid = parts[0], parts[2]
+        idx = _parse_listing(index_blobs[h])
         files = {p[2]: p[0] for p in idx}  # entryname -> filehash
         docs[uuid] = Doc(uuid=uuid, index_hash=h, files=files)
+
     if populate_meta:
+        meta_hashes = [d.files[f"{d.uuid}.metadata"] for d in docs.values()
+                       if f"{d.uuid}.metadata" in d.files]
+        meta_blobs = read_blobs(meta_hashes)
         for d in docs.values():
-            _load_metadata(d)
+            mh = d.files.get(f"{d.uuid}.metadata")
+            if mh is not None:
+                _apply_metadata(d, meta_blobs[mh])
     return docs
 
 
-def _load_metadata(d: Doc) -> None:
-    meta_name = f"{d.uuid}.metadata"
-    if meta_name not in d.files:
-        return
-    raw = read_blob(d.files[meta_name])
+def load_doc(uuid: str) -> Doc | None:
+    """Load a single Doc by UUID (root + its index + metadata ≈ 3 blob reads).
+    Use this instead of re-scanning the whole store when you already know the
+    UUID — e.g. to re-read one notebook right after writing to it."""
+    root = read_blob(current_root())
+    for parts in _parse_listing(root):
+        if parts[2] == uuid:
+            h = parts[0]
+            files = {p[2]: p[0] for p in _parse_listing(read_blob(h))}
+            d = Doc(uuid=uuid, index_hash=h, files=files)
+            _load_metadata(d)
+            return d
+    return None
+
+
+def _apply_metadata(d: Doc, raw: bytes) -> None:
+    """Populate visible_name/parent/doc_type from a doc's `.metadata` blob bytes."""
     try:
         m = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
@@ -101,6 +150,12 @@ def _load_metadata(d: Doc) -> None:
     d.visible_name = m.get("visibleName")
     d.parent = m.get("parent")
     d.doc_type = m.get("type")
+
+
+def _load_metadata(d: Doc) -> None:
+    meta_name = f"{d.uuid}.metadata"
+    if meta_name in d.files:
+        _apply_metadata(d, read_blob(d.files[meta_name]))
 
 
 def ordered_pages(d: Doc) -> list[tuple[str, str]]:

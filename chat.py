@@ -158,7 +158,8 @@ def process_notebook(nb: R.Doc) -> bool:
     # record the answered page AND our freshly-created page so neither retriggers.
     state["session_id"] = result.get("session_id")
     state["handled"].append(key)
-    fresh = R.ordered_pages(R.load_docs()[nb.uuid])
+    fresh_doc = R.load_doc(nb.uuid)             # one notebook, not a full store scan
+    fresh = R.ordered_pages(fresh_doc) if fresh_doc else []
     if fresh:
         np_uuid, np_hash = fresh[-1]
         state["handled"].append(f"{np_uuid}:{np_hash}")
