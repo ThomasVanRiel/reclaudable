@@ -7,6 +7,7 @@ avoids that. drawj2d would also work but needs a JRE.)
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -16,6 +17,15 @@ import cairosvg
 DEFAULT_WIDTH = 1404
 
 
+def _rmc_bin() -> str:
+    """Locate the `rmc` console script. Prefer the one in the running
+    interpreter's venv (sibling of sys.executable) so rendering works even when
+    .venv/bin isn't on PATH — e.g. the watcher launches via .venv/bin/python3
+    directly, which sets the interpreter but NOT PATH. Fall back to PATH."""
+    cand = Path(sys.executable).parent / "rmc"
+    return str(cand) if cand.exists() else "rmc"
+
+
 def rm_to_png(rm_path: str | Path, png_path: str | Path,
               width: int = DEFAULT_WIDTH) -> Path:
     rm_path, png_path = Path(rm_path), Path(png_path)
@@ -23,7 +33,7 @@ def rm_to_png(rm_path: str | Path, png_path: str | Path,
         svg_path = Path(tf.name)
     try:
         # rmscene warns about unread (newer Paper Pro) blocks; strokes still render.
-        subprocess.run(["rmc", "-t", "svg", str(rm_path), "-o", str(svg_path)],
+        subprocess.run([_rmc_bin(), "-t", "svg", str(rm_path), "-o", str(svg_path)],
                        check=True, capture_output=True)
         cairosvg.svg2png(url=str(svg_path), write_to=str(png_path),
                          output_width=width, background_color="white")
