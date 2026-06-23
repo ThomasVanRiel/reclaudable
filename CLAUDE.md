@@ -43,7 +43,10 @@ Not a per-notebook folder: a git-like blob store. Data dir
   patch `.content` (append page, next idx, `pageCount`/`uuids`) → `rmapi` rm+put.
 - `chat.py` — one turn: pick last content page → render → headless Claude
   (`process_notebook`, raises `RateLimited`) → append reply. State in
-  `state/<uuid>.json`.
+  `state/<uuid>.json`. The reply persona is loaded from `persona.md` (passed via
+  `--append-system-prompt`); the reply-Claude runs in `CLAUDE_CWD`
+  (`~/.rm-llm/claude-cwd`, outside the repo) so THIS `CLAUDE.md` never enters its
+  context. Don't put the reMarkable persona here — it goes in `persona.md`.
 - `watcher.py` — polls `.root.history`; on change runs a turn per `Claude`-folder
   notebook. Logs to `logs/watcher.log`. Launch via `watcherctl.sh`.
 - `bin/rmapi` — wrapper that runs the built `rmapi` (at `/home/you/source/rmapi`,

@@ -37,6 +37,7 @@ Only notebooks in the `Claude` folder are ever touched.
 | `render.py` | Render a `.rm` v6 page → PNG (`rmc` → SVG → `cairosvg`). |
 | `writeback.py`| Turn reply text into a `.rm` page (via `rmscene`) and append it to a notebook, uploading with `rmapi`. |
 | `chat.py` | Run a single turn for one notebook (read newest page → Claude → append reply). |
+| `persona.md` | How Claude behaves when replying on the tablet — edit this to change its tone/rules. |
 | `watcher.py` | Watch for syncs and run turns automatically. |
 | `watcherctl.sh` | Start/stop/status/restart the watcher. |
 | `poc.py` | Read-only demo: render newest page → Claude → print reply (no write-back). |
