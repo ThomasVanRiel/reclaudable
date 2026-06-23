@@ -30,6 +30,14 @@ BLANK_RM_MAX_BYTES = 1000   # .rm files smaller than this carry no strokes
 # The reMarkable assistant's behaviour — edit persona.md to change it.
 PERSONA = (HERE / "persona.md").read_text().strip()
 
+# Shown in each reply's frame (writeback adds the "model · timestamp" line). Not
+# parsed from the result JSON — keep in sync by hand if the backend model changes.
+MODEL_LABEL = "Claude Opus 4.8"
+
+# The reply-Claude emits this (and nothing else) when the page is an unfinished
+# draft or carries no request — so we don't answer a page that synced mid-edit.
+WAIT_SENTINEL = "<<WAIT>>"
+
 # Run the reply-Claude here, OUTSIDE the repo tree, so it never auto-loads this
 # project's CLAUDE.md (coding instructions) as context — only `persona.md` via
 # --append-system-prompt shapes replies. Must be a STABLE path: Claude Code keys
@@ -64,8 +72,10 @@ def call_claude(png: Path, resume: str | None) -> dict:
            "--append-system-prompt", PERSONA]
     if resume:
         cmd += ["--resume", resume]
-    prompt = (f"New handwritten page from the user. Read the image at {png} "
-              "and respond per your instructions.")
+    prompt = (f"New or edited handwritten page from the user. Read the image at "
+              f"{png}. If it is an unfinished draft or has no request for you, "
+              f"reply with exactly {WAIT_SENTINEL} and nothing else. Otherwise "
+              "respond per your instructions.")
     CLAUDE_CWD.mkdir(parents=True, exist_ok=True)
     out = subprocess.run(cmd, input=prompt, text=True, capture_output=True,
                          timeout=300, cwd=CLAUDE_CWD)
@@ -130,10 +140,20 @@ def process_notebook(nb: R.Doc) -> bool:
 
     result = call_claude(png, state.get("session_id"))
     reply = result.get("result", "").strip()
+
+    # The page isn't a request yet (unfinished draft, or no ask) — don't reply.
+    # Mark this hash handled so we don't re-read it until the page changes; leave
+    # session_id untouched so the ephemeral skip stays out of the conversation.
+    if reply.upper().startswith(WAIT_SENTINEL):
+        print(f"{nb.visible_name!r}: page not a request yet — waiting for a trigger.")
+        state["handled"].append(key)
+        save_state(nb.uuid, state)
+        return False
+
     print("\n----- reply -----\n" + reply + "\n-----------------")
 
     W.append_page(nb.uuid, reply, folder=CLAUDE_FOLDER,
-                  visible_name=nb.visible_name)
+                  visible_name=nb.visible_name, model_label=MODEL_LABEL)
 
     # record the answered page AND our freshly-created page so neither retriggers.
     state["session_id"] = result.get("session_id")

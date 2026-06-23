@@ -58,14 +58,30 @@ Not a per-notebook folder: a git-like blob store. Data dir
   `-`/`*` bullets → `•` and lets `1.` ordered lists through (they render fine),
   but headings (`#`), bold (`**`), tables, and backticks render literally and
   look broken. `writeback` strips those; the persona bans them and allows lists.
+- **Replies are framed by `writeback`** — `_frame_reply` wraps each reply as
+  `BANNER / paraphrase / BANNER / "model · timestamp" / blank / body` (BANNER is
+  a `WRAP_WIDTH`-char `─` rule). The split relies on the model emitting `Read as: …` + a
+  blank line (persona enforces); no prefix → metadata + body, no top box. Label
+  is `chat.MODEL_LABEL` (hand-kept); timestamp is wall-clock at writeback time.
 - **Reply margins:** canvas is centred, x∈[-702,+702] for the 1404px-wide page.
-  `writeback.POS_X=-585, WIDTH=1209` (left margin 117px, right 78px); `WRAP_WIDTH=76`.
+  `writeback.POS_X=-585, WIDTH=1209` (left margin 117px, right 78px). `WRAP_WIDTH=46`
+  hard-wraps. The device also auto-wraps to the 1209px box (~48 device-font chars,
+  bigger than rmc's 7pt render), so keep `WRAP_WIDTH` at/under ~48 or lines
+  double-wrap on-device. It's deliberately a bit narrow — the right margin is wanted
+  for hand annotation. Lower it for more annotation room; don't raise above ~48.
 - **Length is fine** — reMarkable pages scroll vertically; only horizontal width is
   fixed (hence wrapping). Keep replies readable, not artificially short.
 - **New page must sort last:** `_next_idx` bumps the MAX existing idx (the device
   reorders the `.content` array).
 - **Never reply to our own / blank pages:** state tracks handled `pageid:hash`;
   trailing pages under `BLANK_RM_MAX_BYTES` (no strokes) are skipped.
+- **Answer-trigger gate:** the device syncs mid-edit, so we don't auto-answer every
+  page. The reply-Claude emits `<<WAIT>>` (only that) when the page is an unfinished
+  draft or has no request; `process_notebook` skips it and marks the hash `handled`
+  (so it won't re-read until the page changes — edit → new hash → re-evaluated). A
+  complete prompt or an explicit ask (review/thoughts/go/?, semantic not literal)
+  triggers a real answer. `<<WAIT>>` reads cost one model call each and don't update
+  `session_id` (kept out of the resumed conversation). Gate lives in `persona.md`.
 - **Backend rate limit is real:** Pro returns `is_error`/`429` "session limit";
   `chat` raises `RateLimited`, watcher backs off. Not a bug.
 - **Back up before writes:** root pointers (`.root.history`/`.tree`) saved in

@@ -11,6 +11,7 @@ content-addressed, so the pre-write root in backups/ is a full rollback point.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import shutil
@@ -48,12 +49,45 @@ def _next_idx(idx: str) -> str:
 # expands pages as needed. rmc's default was pos_x=-468/width=936 (234px both).
 POS_X = -585.0
 WIDTH = 1209.0
-WRAP_WIDTH = 76  # chars/line filling the wider column (verified by rendering)
+# Hard-wrap width, in chars. The device ALSO auto-wraps typed text to the
+# WIDTH=1209px box (~48 device-font chars), so keep this at/under ~48 or lines
+# double-wrap into ragged rows. We deliberately wrap a bit narrow: you likes
+# the right margin it leaves for annotating replies by hand. (76 was wrong — it
+# was tuned to rmc's small 7pt reading-render, not the larger device font.)
+WRAP_WIDTH = 46
+
+# Horizontal rule for the reply frame. One WRAP_WIDTH-char token, so _wrap leaves
+# it on a single line. If the `─` glyph is ever missing from the device's
+# typed-text font, switch to "-" * WRAP_WIDTH.
+BANNER = "─" * WRAP_WIDTH
+
+
+def _frame_reply(reply_text: str, model_label: str,
+                 when: datetime.datetime | None = None) -> str:
+    """Wrap the model's reply in a deterministic frame:
+
+        BANNER / paraphrase / BANNER / "model · timestamp" / blank / body
+
+    The model emits `Read as: <paraphrase>` + a blank line + the response (the
+    persona enforces this); we split on the first blank line and compose the
+    frame here so the timestamp is real wall-clock and the layout is identical
+    every turn. If there's no `Read as` prefix, fall back to metadata + body with
+    no top box."""
+    when = when or datetime.datetime.now()
+    meta = f"{model_label} · {when:%A %-d %B at %H:%M}"
+    body = reply_text.strip()
+    if body[:7].lower().startswith("read as"):
+        head, sep, rest = body.partition("\n\n")
+        if sep:
+            paraphrase, body = head.strip(), rest.strip()
+            return "\n".join([BANNER, paraphrase, BANNER, meta, "", body])
+    return "\n".join([meta, "", body])
 
 
 def _wrap(text: str) -> str:
-    """Word-wrap each paragraph so lines fit the text column (the renderer emits
-    one line per source line and does not auto-wrap)."""
+    """Word-wrap each paragraph to WRAP_WIDTH. We hard-wrap (rather than let the
+    device wrap) to keep the column narrow — see WRAP_WIDTH — and because the rmc
+    reading-path render does not auto-wrap."""
     import textwrap
     out: list[str] = []
     for para in text.split("\n"):
@@ -66,7 +100,7 @@ def _wrap(text: str) -> str:
 
 def _text_to_rm(text: str, out_rm: Path) -> None:
     """Render plain reply text to a .rm v6 page via rmscene, with custom margins.
-    Strips md markers (rendered literally) and wraps long lines."""
+    Strips md markers (rendered literally) and hard-wraps long lines."""
     from rmscene import scene_stream as ss
 
     clean = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.M)      # headings
@@ -85,7 +119,7 @@ def _text_to_rm(text: str, out_rm: Path) -> None:
 
 def append_page(notebook_uuid: str, reply_text: str,
                 folder: str = CLAUDE_FOLDER, visible_name: str | None = None,
-                dry_run: bool = False) -> str:
+                model_label: str = "Claude", dry_run: bool = False) -> str:
     """Append reply_text as a new page. Returns the new page UUID."""
     work = Path(tempfile.mkdtemp(prefix="rmwb-"))
     try:
@@ -115,7 +149,8 @@ def append_page(notebook_uuid: str, reply_text: str,
         new_page = str(uuid.uuid4())
         page_dir = unp / doc_uuid
         page_dir.mkdir(exist_ok=True)
-        _text_to_rm(reply_text, page_dir / f"{new_page}.rm")
+        framed = _frame_reply(reply_text, model_label)
+        _text_to_rm(framed, page_dir / f"{new_page}.rm")
 
         # 4. patch .content
         pages = content["cPages"]["pages"]
