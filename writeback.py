@@ -117,16 +117,23 @@ def _text_to_rm(text: str, out_rm: Path) -> None:
         ss.write_blocks(f, blocks)
 
 
-def append_page(notebook_uuid: str, reply_text: str,
-                folder: str = CLAUDE_FOLDER, visible_name: str | None = None,
-                model_label: str = "Claude", dry_run: bool = False) -> str:
-    """Append reply_text as a new page. Returns the new page UUID."""
+def _with_bundle(folder: str, visible_name: str | None,
+                 mutate, dry_run: bool = False) -> str:
+    """Round-trip a notebook bundle and apply an in-place edit.
+
+    Downloads (`rmapi get`) → unpacks → loads `.content` → calls
+    `mutate(unp, content, doc_uuid)` (which edits files under `unp/` and/or the
+    `content` dict in place and returns the affected page UUID) → re-zips →
+    `rmapi rm`+`put`. The whole store is content-addressed, so this same cycle can
+    append, overwrite, or remove any page — the only difference is `mutate`.
+
+    Returns the page UUID `mutate` reports. With `dry_run`, writes the modified zip
+    to `renders/` and skips the device mutation."""
     work = Path(tempfile.mkdtemp(prefix="rmwb-"))
     try:
-        # 1. download the current bundle
+        # 1. download the current bundle (rmapi get writes <visibleName>.zip into cwd)
         dl = work / "dl"
         dl.mkdir()
-        # rmapi get writes <visibleName>.zip into cwd
         cp = subprocess.run([RMAPI, "-ni", "get", f"/{folder}/{visible_name}"],
                             cwd=dl, text=True, capture_output=True)
         if cp.returncode != 0:
@@ -134,28 +141,66 @@ def append_page(notebook_uuid: str, reply_text: str,
         zips = list(dl.glob("*.zip"))
         if not zips:
             raise RuntimeError("rmapi get produced no zip")
-        src_zip = zips[0]
 
         # 2. unpack
         unp = work / "unp"
-        with zipfile.ZipFile(src_zip) as z:
+        with zipfile.ZipFile(zips[0]) as z:
             z.extractall(unp)
 
         content_path = next(unp.glob("*.content"))
         doc_uuid = content_path.stem
         content = json.loads(content_path.read_text())
 
-        # 3. render reply -> new page .rm inside the doc's page dir
-        new_page = str(uuid.uuid4())
+        # 3. apply the page-level edit, then persist the (possibly changed) content
+        page = mutate(unp, content, doc_uuid)
+        content_path.write_text(json.dumps(content))
+
+        # 4. re-zip with the SAME visibleName (put keeps the name; UUID comes from
+        #    the internal files)
+        out_zip = work / f"{visible_name}.zip"
+        with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
+            for f in sorted(unp.rglob("*")):
+                if f.is_file():
+                    z.write(f, f.relative_to(unp).as_posix())
+
+        if dry_run:
+            keep = HERE / "renders" / f"{visible_name}.modified.zip"
+            keep.parent.mkdir(exist_ok=True)
+            shutil.copy(out_zip, keep)
+            print(f"[dry-run] modified bundle: {keep} (page {page})")
+            return page
+
+        # 5. replace: rm old, put new
+        rm = _rmapi("rm", f"/{folder}/{visible_name}", check=False)
+        if rm.returncode != 0:
+            raise RuntimeError(f"rmapi rm failed: {rm.stderr or rm.stdout}")
+        put = _rmapi("put", str(out_zip), f"/{folder}", check=False)
+        if put.returncode != 0:
+            raise RuntimeError(
+                f"rmapi put failed (notebook was removed! restore from backup): "
+                f"{put.stderr or put.stdout}")
+        print(f"uploaded: page {page} -> /{folder}/{visible_name}")
+        return page
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def append_page(notebook_uuid: str, reply_text: str,
+                folder: str = CLAUDE_FOLDER, visible_name: str | None = None,
+                model_label: str = "Claude", dry_run: bool = False) -> str:
+    """Append reply_text as a new page. Returns the new page UUID."""
+    new_page = str(uuid.uuid4())
+
+    def mutate(unp: Path, content: dict, doc_uuid: str) -> str:
+        # render reply -> new page .rm inside the doc's page dir
         page_dir = unp / doc_uuid
         page_dir.mkdir(exist_ok=True)
         framed = _frame_reply(reply_text, model_label)
         _text_to_rm(framed, page_dir / f"{new_page}.rm")
 
-        # 4. patch .content
+        # patch .content. Sort after EVERY page (the .content array is not
+        # necessarily in idx order; the device reorders), so the reply lands last.
         pages = content["cPages"]["pages"]
-        # Sort after EVERY page (the .content array is not necessarily in idx
-        # order; the device reorders), so the reply always lands last.
         last_idx = max((p["idx"]["value"] for p in pages), default="ba")
         template = pages[-1].get("template", {"timestamp": "1:1", "value": "Blank"}) \
             if pages else {"timestamp": "1:1", "value": "Blank"}
@@ -169,33 +214,44 @@ def append_page(notebook_uuid: str, reply_text: str,
         if uuids:
             uuids[0]["second"] = uuids[0].get("second", 1) + 1
         content["pageCount"] = content.get("pageCount", len(pages) - 1) + 1
-        content_path.write_text(json.dumps(content))
-
-        # 5. re-zip with the SAME visibleName (so put keeps the name; UUID comes
-        #    from the internal files)
-        out_zip = work / f"{visible_name}.zip"
-        with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
-            for f in sorted(unp.rglob("*")):
-                if f.is_file():
-                    z.write(f, f.relative_to(unp).as_posix())
-
-        if dry_run:
-            keep = HERE / "renders" / f"{visible_name}.modified.zip"
-            keep.parent.mkdir(exist_ok=True)
-            shutil.copy(out_zip, keep)
-            print(f"[dry-run] modified bundle: {keep} (page {new_page})")
-            return new_page
-
-        # 6. replace: rm old, put new
-        rm = _rmapi("rm", f"/{folder}/{visible_name}", check=False)
-        if rm.returncode != 0:
-            raise RuntimeError(f"rmapi rm failed: {rm.stderr or rm.stdout}")
-        put = _rmapi("put", str(out_zip), f"/{folder}", check=False)
-        if put.returncode != 0:
-            raise RuntimeError(
-                f"rmapi put failed (notebook was removed! restore from backup): "
-                f"{put.stderr or put.stdout}")
-        print(f"uploaded: +1 page ({new_page}) to /{folder}/{visible_name}")
         return new_page
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+
+    return _with_bundle(folder, visible_name, mutate, dry_run)
+
+
+def replace_page(notebook_uuid: str, page_uuid: str, reply_text: str,
+                 folder: str = CLAUDE_FOLDER, visible_name: str | None = None,
+                 model_label: str = "Claude", dry_run: bool = False) -> str:
+    """Overwrite an existing page's strokes in place with reply_text — same slot,
+    same position. Used to turn a rate-limit placeholder into the real reply.
+    Returns page_uuid."""
+    def mutate(unp: Path, content: dict, doc_uuid: str) -> str:
+        rm_path = unp / doc_uuid / f"{page_uuid}.rm"
+        if not rm_path.exists():
+            raise RuntimeError(f"replace_page: page {page_uuid} not in notebook")
+        _text_to_rm(_frame_reply(reply_text, model_label), rm_path)
+        for p in content["cPages"]["pages"]:   # bump modifed; leave order untouched
+            if p.get("id") == page_uuid:
+                p["modifed"] = str(int(time.time() * 1000))
+        return page_uuid
+
+    return _with_bundle(folder, visible_name, mutate, dry_run)
+
+
+def remove_page(notebook_uuid: str, page_uuid: str,
+                folder: str = CLAUDE_FOLDER, visible_name: str | None = None,
+                dry_run: bool = False) -> str:
+    """Delete a page in place (the .rm file + its cPages entry). Used when a
+    rate-limit retry comes back <<WAIT>> — the page was never a real request.
+    Returns page_uuid."""
+    def mutate(unp: Path, content: dict, doc_uuid: str) -> str:
+        (unp / doc_uuid / f"{page_uuid}.rm").unlink(missing_ok=True)
+        pages = content["cPages"]["pages"]
+        pages[:] = [p for p in pages if p.get("id") != page_uuid]
+        uuids = content["cPages"].get("uuids")
+        if uuids and uuids[0].get("second", 1) > 1:
+            uuids[0]["second"] -= 1
+        content["pageCount"] = max(content.get("pageCount", len(pages) + 1) - 1, 0)
+        return page_uuid
+
+    return _with_bundle(folder, visible_name, mutate, dry_run)

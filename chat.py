@@ -39,6 +39,11 @@ PERSONA = (HERE / "persona.md").read_text().strip()
 # and written directly (bypasses the model, so no extra cost).
 ERROR_LABEL = "reclaudable error"
 
+# Label on the placeholder page written when the backend is rate-limited. The
+# placeholder is later rewritten IN PLACE (writeback.replace_page) into the real
+# reply once the limit resets — same slot, so it visibly turns into the answer.
+PENDING_LABEL = "reclaudable · waiting"
+
 # The reply-Claude emits this (and nothing else) when the page is an unfinished
 # draft or carries no request — so we don't answer a page that synced mid-edit.
 WAIT_SENTINEL = "<<WAIT>>"
@@ -123,6 +128,11 @@ def process_notebook(nb: R.Doc) -> bool:
     from render import rm_bytes_to_png
 
     state = load_state(nb.uuid)
+    if state.get("pending"):
+        # A rate-limited turn left a placeholder page owed a real answer. Resolve
+        # that first (rewrite it in place) before looking at any newer page.
+        return _retry_pending(nb, state)
+
     pages = R.ordered_pages(nb)                 # (pageUUID, hash) in page order
     # Skip trailing blank pages (reMarkable keeps an empty page ready to write on;
     # a blank Paper Pro .rm is ~400 bytes). Target the last page with content.
@@ -167,8 +177,13 @@ def process_notebook(nb: R.Doc) -> bool:
         save_state(nb.uuid, state)
         print(f"done. cost ${result.get('total_cost_usd', 0):.4f}")
         return True
-    except RateLimited:
-        raise   # transient: let the watcher back off and retry this page later
+    except RateLimited as exc:
+        # Backend is throttled. Surface a placeholder page so the device isn't
+        # silent, remember the page we owe an answer to, then re-raise so the
+        # watcher backs off. The retry path (driven by state["pending"]) rewrites
+        # this placeholder in place once the limit resets.
+        _surface_rate_limit(nb, state, key, exc)
+        raise   # transient: let the watcher back off and retry after the reset
     except Exception as err:
         print(f"{nb.visible_name!r}: failed to answer page:\n{traceback.format_exc()}")
         _surface_error(nb, state, key, err)
@@ -183,6 +198,90 @@ def _record_created_page(uuid: str, state: dict) -> None:
     if fresh:
         np_uuid, np_hash = fresh[-1]
         state["handled"].append(f"{np_uuid}:{np_hash}")
+
+
+def _rate_limit_message(exc: Exception) -> str:
+    detail = next((ln for ln in str(exc).splitlines() if ln.strip()), "session limit")
+    return ("I'm rate-limited on the backend right now, so I can't answer this page "
+            "yet:\n\n"
+            f"{detail.strip()[:200]}\n\n"
+            "This page is a placeholder — I'll rewrite it in place with the real "
+            "reply as soon as the limit resets. Nothing you wrote was lost; no need "
+            "to do anything.")
+
+
+def _surface_rate_limit(nb: R.Doc, state: dict, key: str, exc: Exception) -> None:
+    """Write a 'waiting' placeholder page and record the page we still owe an
+    answer to, so the retry path can rewrite it in place once the limit resets.
+    Best-effort: if even the placeholder write fails, fall back to silent backoff
+    (no pending state) rather than throwing over the original RateLimited."""
+    try:
+        placeholder = W.append_page(nb.uuid, _rate_limit_message(exc),
+                                    folder=CLAUDE_FOLDER, visible_name=nb.visible_name,
+                                    model_label=PENDING_LABEL)
+        state["pending"] = {"source_key": key, "page": placeholder}
+        state["handled"].append(key)
+        _record_created_page(nb.uuid, state)   # placeholder is newest -> mark handled
+        save_state(nb.uuid, state)
+        print(f"{nb.visible_name!r}: rate-limited — wrote placeholder page {placeholder[:8]}.")
+    except Exception:
+        print(f"{nb.visible_name!r}: could not write rate-limit placeholder:\n"
+              f"{traceback.format_exc()}")
+
+
+def _retry_pending(nb: R.Doc, state: dict) -> bool:
+    """Re-answer the page a rate-limited turn left pending, rewriting its
+    placeholder page IN PLACE. Returns True if a real reply was written. Raises
+    RateLimited (placeholder kept) so the watcher keeps backing off."""
+    from render import rm_bytes_to_png
+
+    pending = state["pending"]
+    source_uuid, _, source_hash = pending["source_key"].partition(":")
+    placeholder = pending["page"]
+    print(f"{nb.visible_name!r}: retrying pending page {source_uuid[:8]} "
+          f"-> placeholder {placeholder[:8]}")
+    try:
+        RENDER_DIR.mkdir(exist_ok=True)
+        png = RENDER_DIR / f"{nb.uuid}.png"
+        rm_bytes_to_png(R.read_blob(source_hash), png)
+
+        result = call_claude(png, state.get("session_id"))
+        reply = result.get("result", "").strip()
+
+        # The rate-limit may have fired on a page that was only a mid-edit draft.
+        # If the retry now says WAIT, the placeholder was spurious — remove it.
+        if reply.upper().startswith(WAIT_SENTINEL):
+            print(f"{nb.visible_name!r}: pending page isn't a request — removing placeholder.")
+            W.remove_page(nb.uuid, placeholder, folder=CLAUDE_FOLDER,
+                          visible_name=nb.visible_name)
+            state.pop("pending", None)
+            save_state(nb.uuid, state)
+            return False
+
+        print("\n----- reply -----\n" + reply + "\n-----------------")
+        W.replace_page(nb.uuid, placeholder, reply, folder=CLAUDE_FOLDER,
+                       visible_name=nb.visible_name, model_label=MODEL_LABEL)
+        state["session_id"] = result.get("session_id")
+        state.pop("pending", None)
+        _record_created_page(nb.uuid, state)   # rewritten page has a NEW hash
+        save_state(nb.uuid, state)
+        print(f"done (in place). cost ${result.get('total_cost_usd', 0):.4f}")
+        return True
+    except RateLimited:
+        raise   # still throttled: keep the placeholder, retry on the next root change
+    except Exception as err:
+        print(f"{nb.visible_name!r}: pending retry failed:\n{traceback.format_exc()}")
+        try:   # turn the placeholder into an error page rather than appending one
+            W.replace_page(nb.uuid, placeholder, _error_message(err),
+                           folder=CLAUDE_FOLDER, visible_name=nb.visible_name,
+                           model_label=ERROR_LABEL)
+            state.pop("pending", None)
+            _record_created_page(nb.uuid, state)
+        except Exception:
+            print(f"{nb.visible_name!r}: could not write error to placeholder:\n"
+                  f"{traceback.format_exc()}")
+        save_state(nb.uuid, state)
+        return False
 
 
 def _error_message(err: Exception) -> str:
