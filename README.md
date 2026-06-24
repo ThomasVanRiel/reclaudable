@@ -142,6 +142,13 @@ tail -f logs/watcher.log
 You can also confirm activity server-side in `docker logs <container>` (each turn is
 a burst of `PUT /sync/v3/files…` → `PUT /sync/v3/root` → `got sync completed`).
 
+### Ask for a diagram
+
+When you ask for a diagram, sketch, chart, or flow ("draw the architecture",
+"sketch this as boxes and arrows"), Claude can draw back: its reply lands as text
+plus a simple figure rendered as real pen strokes below it. It only draws when you
+explicitly ask — the figure supplements the text answer, it never replaces it.
+
 ### Email a report
 
 Write "email me the report" (or "send me a summary of this") on a page and Claude
@@ -162,11 +169,14 @@ defaults to the from address. Test it without the tablet:
 
 | File | Purpose |
 |------|---------|
+| `config.py` | Central config; loads `.env` (host/SMTP values) with author-specific defaults. |
 | `rmstore.py` | Read the rmfakecloud sync15 store (read-only): resolve the `Claude` folder, list notebooks, extract pages in order. |
 | `render.py` | Render a `.rm` v6 page → PNG (`rmc` in-process → SVG → `cairosvg`). Patches `rmc`'s palette for the Paper Pro highlight colour. |
 | `writeback.py`| Turn reply text into a framed `.rm` page (via `rmscene`) and append it to a notebook, uploading with `rmapi`. |
 | `chat.py` | Run a single turn for one notebook (read newest page → Claude → append reply, or skip if it isn't a request yet). |
 | `persona.md` | How Claude behaves when replying on the tablet — edit this to change its tone/rules. |
+| `draw.py` | Parse a reply's `<<DRAW>>` block into `.rm` pen strokes drawn below the text. |
+| `hershey.py` | Tiny single-stroke font for the text labels inside drawn figures. |
 | `mailer.py` | Parse a reply's `<<EMAIL>>` block and send it as a multipart report (plain + HTML + `report.md`) over SMTP. |
 | `watcher.py` | Watch for syncs and run turns automatically. |
 | `watcherctl.sh` | Start/stop/status/restart the watcher. |
