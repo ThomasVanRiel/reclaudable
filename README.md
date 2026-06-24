@@ -117,7 +117,7 @@ match `RECLAUDABLE_FOLDER`) and put your chat notebooks inside it.
 One-off turn for a notebook (mainly for testing):
 
 ```sh
-.venv/bin/python chat.py [notebook-uuid]    # no arg → notebooks in the Claude folder
+.venv/bin/python src/chat.py [notebook-uuid]    # no arg → notebooks in the Claude folder
 ```
 
 Run continuously (recommended) — watches every sync:
@@ -161,8 +161,8 @@ values from rmfakecloud's `RM_SMTP_*`); `RECLAUDABLE_EMAIL_TO` is the recipient 
 defaults to the from address. Test it without the tablet:
 
 ```sh
-.venv/bin/python mailer.py --dry-run   # print the assembled message, don't send
-.venv/bin/python mailer.py --send      # actually email a canned report to EMAIL_TO
+.venv/bin/python src/mailer.py --dry-run   # print the assembled message, don't send
+.venv/bin/python src/mailer.py --send      # actually email a canned report to EMAIL_TO
 ```
 
 ### Import a conversation (the `/reclaudable` skill)
@@ -184,32 +184,34 @@ ln -s "$PWD/skills/reclaudable" ~/.claude/skills/reclaudable
 Because the import (notebook upload + session priming) must run on the reclaudable
 server, the skill sends the summary there over **SSH** — set the `SSH_HOST` and the
 server-side command at the top of `skills/reclaudable/SKILL.md`. Your work machines
-need only key-based SSH to the server. The server side is `import_nb.py`, which
+need only key-based SSH to the server. The server side is `src/import_nb.py`, which
 reads a `{"title", "summary"}` JSON payload on stdin:
 
 ```sh
-ssh myserver '.../.venv/bin/python .../import_nb.py' < payload.json
-.venv/bin/python import_nb.py --name "Title" --summary-file summary.md   # local test
+ssh myserver '.../.venv/bin/python .../src/import_nb.py' < payload.json
+.venv/bin/python src/import_nb.py --name "Title" --summary-file summary.md   # local test
 ```
 
 ## Layout
 
+Python modules live in `src/`; config, persona, and runtime dirs stay at the root.
+
 | File | Purpose |
 |------|---------|
-| `config.py` | Central config; loads `.env` (host/SMTP values) with author-specific defaults. |
-| `rmstore.py` | Read the rmfakecloud sync15 store (read-only): resolve the `Claude` folder, list notebooks, extract pages in order. |
-| `render.py` | Render a `.rm` v6 page → PNG (`rmc` in-process → SVG → `cairosvg`). Patches `rmc`'s palette for the Paper Pro highlight colour. |
-| `writeback.py`| Turn reply text into a framed `.rm` page (via `rmscene`) and append it to a notebook, uploading with `rmapi`. |
-| `chat.py` | Run a single turn for one notebook (read newest page → Claude → append reply, or skip if it isn't a request yet). |
+| `src/config.py` | Central config; loads `.env` (host/SMTP values) with author-specific defaults. |
+| `src/rmstore.py` | Read the rmfakecloud sync15 store (read-only): resolve the `Claude` folder, list notebooks, extract pages in order. |
+| `src/render.py` | Render a `.rm` v6 page → PNG (`rmc` in-process → SVG → `cairosvg`). Patches `rmc`'s palette for the Paper Pro highlight colour. |
+| `src/writeback.py`| Turn reply text into a framed `.rm` page (via `rmscene`) and append it to a notebook, uploading with `rmapi`. |
+| `src/chat.py` | Run a single turn for one notebook (read newest page → Claude → append reply, or skip if it isn't a request yet). |
 | `persona.md` | How Claude behaves when replying on the tablet — edit this to change its tone/rules. |
-| `draw.py` | Parse a reply's `<<DRAW>>` block into `.rm` pen strokes drawn below the text. |
-| `hershey.py` | Tiny single-stroke font for the text labels inside drawn figures. |
-| `mailer.py` | Parse a reply's `<<EMAIL>>` block and send it as a multipart report (plain + HTML + `report.md`) over SMTP. |
-| `import_nb.py` | Create a new notebook from a summary (stdin payload) and prime its session — backs the `/reclaudable` skill. |
+| `src/draw.py` | Parse a reply's `<<DRAW>>` block into `.rm` pen strokes drawn below the text. |
+| `src/hershey.py` | Tiny single-stroke font for the text labels inside drawn figures. |
+| `src/mailer.py` | Parse a reply's `<<EMAIL>>` block and send it as a multipart report (plain + HTML + `report.md`) over SMTP. |
+| `src/import_nb.py` | Create a new notebook from a summary (stdin payload) and prime its session — backs the `/reclaudable` skill. |
 | `skills/reclaudable/` | The `/reclaudable` personal skill (symlink into `~/.claude/skills/`) that sends a conversation here over SSH. |
-| `watcher.py` | Watch for syncs and run turns automatically. |
+| `src/watcher.py` | Watch for syncs and run turns automatically. |
 | `watcherctl.sh` | Start/stop/status/restart the watcher. |
-| `poc.py` | Read-only demo: render newest page → Claude → print reply (no write-back). |
+| `src/poc.py` | Read-only demo: render newest page → Claude → print reply (no write-back). |
 | `bin/rmapi` | Wrapper for the built `rmapi`, pointed at the self-hosted cloud. |
 | `state/<uuid>.json` | Per-notebook session id + which pages have been handled. |
 | `logs/` | `watcher.log` (per-turn, timestamped) and `watcher.out` (crash output). |

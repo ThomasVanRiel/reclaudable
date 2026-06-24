@@ -1,7 +1,7 @@
 """Central configuration for reclaudable.
 
 Host- and deployment-specific values (rmfakecloud username, container name,
-folder, model label, …) live in a `.env` file next to this module — copy
+folder, model label, …) live in a `.env` file at the repo root — copy
 `.env.example` to `.env` and edit. Everything has a default, so the code still
 imports without a `.env`, but the defaults are author-specific; set your own.
 
@@ -15,7 +15,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-HERE = Path(__file__).parent
+# Repo root (this module lives in src/); host config files like .env sit at the root.
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _load_env(path: Path) -> None:
@@ -29,7 +30,7 @@ def _load_env(path: Path) -> None:
         os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
-_load_env(HERE / ".env")
+_load_env(ROOT / ".env")
 
 
 def _get(name: str, default: str) -> str:

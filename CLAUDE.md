@@ -35,6 +35,11 @@ Not a per-notebook folder: a git-like blob store. Data dir
   root/generation chain stays consistent.
 
 ## Components
+All Python modules live in `src/` (file names below are unprefixed for brevity).
+`.env`, `persona.md`, `bin/`, and the runtime dirs (`state/`, `renders/`, `logs/`,
+`backups/`) stay at the repo ROOT — each module computes
+`ROOT = Path(__file__).resolve().parent.parent` to reach them, so don't anchor
+paths to the module's own dir.
 - `config.py` — central config; loads `.env` (zero-dep parser, see `.env.example`)
   for host-specific values (rmfakecloud user/container/sync dir, watched folder,
   model label, `CLAUDE_CWD`, rmapi host/binary). Defaults exist but are author-

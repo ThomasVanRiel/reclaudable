@@ -25,8 +25,9 @@ from pathlib import Path
 from config import CLAUDE_FOLDER  # host config; see .env
 from render import rm_to_png  # noqa: F401  (handy for debugging)
 
-HERE = Path(__file__).parent
-RMAPI = str(HERE / "bin" / "rmapi")
+# Repo root (this module lives in src/); bin/ and renders/ sit there.
+ROOT = Path(__file__).resolve().parent.parent
+RMAPI = str(ROOT / "bin" / "rmapi")
 
 
 def _rmapi(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -193,7 +194,7 @@ def _with_bundle(folder: str, visible_name: str | None,
                     z.write(f, f.relative_to(unp).as_posix())
 
         if dry_run:
-            keep = HERE / "renders" / f"{visible_name}.modified.zip"
+            keep = ROOT / "renders" / f"{visible_name}.modified.zip"
             keep.parent.mkdir(exist_ok=True)
             shutil.copy(out_zip, keep)
             print(f"[dry-run] modified bundle: {keep} (page {page})")
@@ -350,7 +351,7 @@ def create_notebook(visible_name: str, pages_text: list[str], *,
                     z.write(f, f.relative_to(root).as_posix())
 
         if dry_run:
-            keep = HERE / "renders" / f"{visible_name}.new.zip"
+            keep = ROOT / "renders" / f"{visible_name}.new.zip"
             keep.parent.mkdir(exist_ok=True)
             shutil.copy(out_zip, keep)
             print(f"[dry-run] new notebook bundle: {keep} (doc {doc_uuid})")

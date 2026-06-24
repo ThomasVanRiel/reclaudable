@@ -17,7 +17,7 @@ case "${1:-status}" in
       echo "already running:"; running; exit 0
     fi
     mkdir -p logs
-    nohup "$PYTHON" -u watcher.py --interval 8 >>logs/watcher.out 2>&1 &
+    nohup "$PYTHON" -u src/watcher.py --interval 8 >>logs/watcher.out 2>&1 &
     echo "started (pid $!). live log: $DIR/logs/watcher.log"
     ;;
   stop)

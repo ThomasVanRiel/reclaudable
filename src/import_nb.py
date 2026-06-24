@@ -10,8 +10,8 @@ primes a reclaudable Claude session with the SAME summary so the first handwritt
 follow-up on the tablet continues with context. The notebook arrives DORMANT — the
 seeded page is marked handled so the watcher doesn't auto-reply.
 
-  ... import_nb.py < payload.json
-  ... import_nb.py --name "Title" --summary-file summary.md   # local testing
+  ... src/import_nb.py < payload.json
+  ... src/import_nb.py --name "Title" --summary-file summary.md   # local testing
 
 Continuity must run here (the server): reclaudable's watcher resumes the primed
 session_id from this host's local Claude Code session store; a session created

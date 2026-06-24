@@ -5,7 +5,7 @@ When it changes we reload the store and run a turn on each Claude-folder noteboo
 Our own uploads also bump the root, but process_notebook() records the pages it
 creates in state, so it skips them — no self-reply loop.
 
-  python watcher.py [--interval SECONDS]
+  python src/watcher.py [--interval SECONDS]
 
 Backend throttling (Pro session limit) is handled by backing off, then retrying.
 """
@@ -21,7 +21,8 @@ from pathlib import Path
 import rmstore as R
 from chat import CLAUDE_FOLDER, RateLimited, process_notebook
 
-HERE = Path(__file__).parent
+# Repo root (this module lives in src/); logs/ sits there.
+ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_INTERVAL = 5      # seconds between root-hash polls
 RATE_LIMIT_BACKOFF = 600  # seconds to wait after hitting the backend limit
 
@@ -49,7 +50,7 @@ class _TimestampedTee:
 
 
 def _setup_log() -> Path:
-    logdir = HERE / "logs"
+    logdir = ROOT / "logs"
     logdir.mkdir(exist_ok=True)
     path = logdir / "watcher.log"
     fh = open(path, "a", buffering=1)

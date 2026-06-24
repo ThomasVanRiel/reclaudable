@@ -18,7 +18,7 @@ wherever the user is, so it ships the payload over SSH.
 
 - `SSH_HOST`: the SSH alias/host of the reclaudable server. Default: `myserver`.
 - `IMPORT_CMD`: the server-side command. Default:
-  `/home/you/source/reclaudable/.venv/bin/python /home/you/source/reclaudable/import_nb.py`
+  `/home/you/source/reclaudable/.venv/bin/python /home/you/source/reclaudable/src/import_nb.py`
 
 The machine you run this on needs only key-based SSH to `SSH_HOST` (no rmapi,
 Python, or reMarkable credentials locally).
@@ -43,7 +43,7 @@ Python, or reMarkable credentials locally).
    the server over SSH:
 
    ```sh
-   ssh myserver '/home/you/source/reclaudable/.venv/bin/python /home/you/source/reclaudable/import_nb.py' < /tmp/reclaudable-payload.json
+   ssh myserver '/home/you/source/reclaudable/.venv/bin/python /home/you/source/reclaudable/src/import_nb.py' < /tmp/reclaudable-payload.json
    ```
 
    The importer prints a line like

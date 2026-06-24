@@ -8,8 +8,8 @@ Per-notebook continuity is kept by resuming the Claude session id stored in
 state/<uuid>.json, so each turn only sends the NEW page (a delta).
 
 Usage:
-  python poc.py                 # newest page of newest notebook in `claude` folder
-  python poc.py <notebook-uuid> # specific notebook
+  python src/poc.py                 # newest page of newest notebook in `claude` folder
+  python src/poc.py <notebook-uuid> # specific notebook
 """
 from __future__ import annotations
 
@@ -22,9 +22,10 @@ import rmstore as R
 from config import CLAUDE_FOLDER  # host config; see .env
 from render import rm_bytes_to_png
 
-HERE = Path(__file__).parent
-STATE_DIR = HERE / "state"
-RENDER_DIR = HERE / "renders"
+# Repo root (this module lives in src/); state/ and renders/ sit there.
+ROOT = Path(__file__).resolve().parent.parent
+STATE_DIR = ROOT / "state"
+RENDER_DIR = ROOT / "renders"
 
 PERSONA = (
     "You are a handwriting chat/editor assistant on a reMarkable tablet. "

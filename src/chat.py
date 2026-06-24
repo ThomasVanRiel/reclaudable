@@ -1,7 +1,7 @@
 """reclaudable turn driver: read newest page in a Claude-folder notebook, get Claude's
 reply, append it as a new page.
 
-  python chat.py [notebook-uuid]
+  python src/chat.py [notebook-uuid]
 
 Per-notebook state in state/<uuid>.json:
   session_id  - Claude session to --resume (delta = only the new page)
@@ -24,13 +24,14 @@ import rmstore as R
 import writeback as W
 from config import CLAUDE_FOLDER, CLAUDE_CWD, EMAIL_TO, MODEL_LABEL  # host config; see .env
 
-HERE = Path(__file__).parent
-STATE_DIR = HERE / "state"
-RENDER_DIR = HERE / "renders"
+# Repo root (this module lives in src/); state/, renders/ and persona.md sit there.
+ROOT = Path(__file__).resolve().parent.parent
+STATE_DIR = ROOT / "state"
+RENDER_DIR = ROOT / "renders"
 BLANK_RM_MAX_BYTES = 1000   # .rm files smaller than this carry no strokes
 
 # The reMarkable assistant's behaviour — edit persona.md to change it.
-PERSONA = (HERE / "persona.md").read_text().strip()
+PERSONA = (ROOT / "persona.md").read_text().strip()
 
 # MODEL_LABEL is shown in each reply's frame (writeback adds the "model ·
 # timestamp" line). It is not parsed from the result JSON — set it in .env to
