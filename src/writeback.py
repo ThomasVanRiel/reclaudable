@@ -46,8 +46,8 @@ def _next_idx(idx: str) -> str:
 
 # Text-block geometry (reMarkable canvas is centred: x in [-702, +702] for the
 # 1404px page). Defaults put the column from 117px (left) to 1326px (right),
-# i.e. left margin 117px, right margin 78px — you never annotates the left and
-# expands pages as needed. rmc's default was pos_x=-468/width=936 (234px both).
+# i.e. left margin 117px, right margin 78px — the left is never annotated and
+# pages are expanded as needed. rmc's default was pos_x=-468/width=936 (234px both).
 POS_X = -585.0
 WIDTH = 1209.0
 # Hard-wrap width, in chars. The device ALSO auto-wraps typed text to the
