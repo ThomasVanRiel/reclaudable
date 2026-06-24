@@ -61,6 +61,15 @@ WRAP_WIDTH = 46
 # typed-text font, switch to "-" * WRAP_WIDTH.
 BANNER = "─" * WRAP_WIDTH
 
+# Drawing placement (see draw.py). When a reply carries a `<<DRAW>>` figure, we put
+# it BELOW the text: text flows from pos_y down, and we drop the figure at
+# y = pos_y + n_lines*LINE_H + GAP so it can't collide. LINE_H is canvas units per
+# text line — biased HIGH on purpose: the device font is larger than rmc's reading
+# render (~70 u/line there), and overshooting just pushes the figure further down a
+# page that scrolls anyway. Tune LINE_H against the DEVICE if a gap looks wrong.
+LINE_H = 110.0
+GAP = 70.0
+
 
 def _frame_reply(reply_text: str, model_label: str,
                  when: datetime.datetime | None = None) -> str:
@@ -98,9 +107,10 @@ def _wrap(text: str) -> str:
     return "\n".join(out)
 
 
-def _text_to_rm(text: str, out_rm: Path) -> None:
+def _text_to_rm(text: str, out_rm: Path, draw_spec=None) -> None:
     """Render plain reply text to a .rm v6 page via rmscene, with custom margins.
-    Strips md markers (rendered literally) and hard-wraps long lines."""
+    Strips md markers (rendered literally) and hard-wraps long lines. If draw_spec
+    is given, its strokes are appended as pen Line items below the text."""
     from rmscene import scene_stream as ss
 
     clean = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.M)      # headings
@@ -109,12 +119,31 @@ def _text_to_rm(text: str, out_rm: Path) -> None:
     clean = _wrap(clean)
 
     blocks = list(ss.simple_text_document(clean))
+    pos_y = 234.0
     for b in blocks:
         if isinstance(b, ss.RootTextBlock):
             b.value.pos_x = POS_X
             b.value.width = WIDTH
+            pos_y = b.value.pos_y
+    if draw_spec is not None:
+        import draw
+        n_lines = clean.count("\n") + 1
+        blocks += draw.spec_to_line_blocks(
+            draw_spec, col_x0=POS_X, col_w=WIDTH,
+            y_top=pos_y + n_lines * LINE_H + GAP)
     with open(out_rm, "wb") as f:
         ss.write_blocks(f, blocks)
+
+
+def _render_reply(reply_text: str, model_label: str, out_rm: Path) -> None:
+    """Render a full reply (prose + optional `<<DRAW>>` figure) to a .rm page.
+    Pull the drawing block out BEFORE framing/wrapping (so its DSL lines aren't
+    word-wrapped), then render text and strokes together. Shared by append_page
+    and replace_page so a figure renders the same whether appended or rewritten
+    in place over a rate-limit placeholder."""
+    import draw
+    prose, spec = draw.parse_draw(reply_text)
+    _text_to_rm(_frame_reply(prose, model_label), out_rm, draw_spec=spec)
 
 
 def _with_bundle(folder: str, visible_name: str | None,
@@ -195,8 +224,7 @@ def append_page(notebook_uuid: str, reply_text: str,
         # render reply -> new page .rm inside the doc's page dir
         page_dir = unp / doc_uuid
         page_dir.mkdir(exist_ok=True)
-        framed = _frame_reply(reply_text, model_label)
-        _text_to_rm(framed, page_dir / f"{new_page}.rm")
+        _render_reply(reply_text, model_label, page_dir / f"{new_page}.rm")
 
         # patch .content. Sort after EVERY page (the .content array is not
         # necessarily in idx order; the device reorders), so the reply lands last.
@@ -229,7 +257,7 @@ def replace_page(notebook_uuid: str, page_uuid: str, reply_text: str,
         rm_path = unp / doc_uuid / f"{page_uuid}.rm"
         if not rm_path.exists():
             raise RuntimeError(f"replace_page: page {page_uuid} not in notebook")
-        _text_to_rm(_frame_reply(reply_text, model_label), rm_path)
+        _render_reply(reply_text, model_label, rm_path)
         for p in content["cPages"]["pages"]:   # bump modifed; leave order untouched
             if p.get("id") == page_uuid:
                 p["modifed"] = str(int(time.time() * 1000))

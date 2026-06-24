@@ -50,6 +50,20 @@ Not a per-notebook folder: a git-like blob store. Data dir
   also silences rmscene's "unread block" warning so it doesn't fill the log.
 - `writeback.py` — text → `.rm` (via **rmscene** directly, custom margins) →
   patch `.content` (append page, next idx, `pageCount`/`uuids`) → `rmapi` rm+put.
+  `_with_bundle` is the shared get/unpack/rezip/rm+put scaffold; `append_page`,
+  `replace_page` (overwrite a page in place), and `remove_page` differ only by the
+  `mutate` they pass. `_render_reply` (used by append + replace) parses the
+  drawing block out of the reply, frames+wraps the prose, and renders both.
+- `draw.py` + `hershey.py` — the "draw back" channel. The reply-Claude may emit ONE
+  `<<DRAW>>…<<END>>` block (opt-in; grammar in `persona.md`). `draw.parse_draw`
+  splits prose from a `DrawSpec` of polyline strokes on a logical grid;
+  `spec_to_line_blocks` maps them into canvas coords and builds rmscene
+  `SceneLineItemBlock`s on the text page's layer (`CrdtId(0,11)`), placed BELOW the
+  text at `y = pos_y + n_lines*LINE_H + GAP` (no overlap; `LINE_H` biased high for
+  the larger device font — tune on-device). Text labels can't be text items (one
+  text block per page), so `hershey.py` is a tiny single-stroke font that draws
+  them as strokes (uppercase/digits/punct; lowercase folds to uppercase). rmc
+  already renders `Line` strokes, so `render.py` is unchanged.
 - `chat.py` — one turn: pick last content page → render → headless Claude
   (`process_notebook`, raises `RateLimited`) → append reply. State in
   `state/<uuid>.json`. The reply persona is loaded from `persona.md` (passed via
