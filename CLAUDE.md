@@ -9,8 +9,8 @@ See `README.md` for setup/usage. This file is orientation for editing the code.
 
 ## Architecture
 - **No on-device hacking.** The tablet syncs to self-hosted **rmfakecloud** (Docker
-  container `rmfakecloud`, image `rmfakecloud:pr441`) on host `myserver`. A **watcher**
-  on myserver detects new pages, renders them, calls Claude, and writes the reply
+  container `rmfakecloud`, image `rmfakecloud:pr441`) on the server host. A **watcher**
+  on that host detects new pages, renders them, calls Claude, and writes the reply
   back as a new page; the tablet syncs it next round.
 - **Backend = Claude Code headless on the Pro subscription** (not the paid API).
   One persistent session per notebook → each turn sends only the NEW page (a delta)
