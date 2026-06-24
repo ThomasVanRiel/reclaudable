@@ -22,7 +22,7 @@ from pathlib import Path
 import mailer
 import rmstore as R
 import writeback as W
-from config import CLAUDE_FOLDER, CLAUDE_CWD, EMAIL_TO, MODEL_LABEL  # host config; see .env
+from config import CLAUDE_BIN, CLAUDE_FOLDER, CLAUDE_CWD, EMAIL_TO, MODEL_LABEL  # host config; see .env
 
 # Repo root (this module lives in src/); state/, renders/ and persona.md sit there.
 ROOT = Path(__file__).resolve().parent.parent
@@ -80,7 +80,7 @@ def _run_claude(prompt: str, resume: str | None = None) -> dict:
     """Run one headless `claude -p` call with the reply persona, parse its JSON
     result, and translate errors (429 -> RateLimited). Shared by the turn loop
     (call_claude) and session priming (prime_session)."""
-    cmd = ["claude", "-p", "--output-format", "json",
+    cmd = [CLAUDE_BIN, "-p", "--output-format", "json",
            "--permission-mode", "bypassPermissions",
            "--allowedTools", "Read,WebSearch,WebFetch",
            "--append-system-prompt", PERSONA]

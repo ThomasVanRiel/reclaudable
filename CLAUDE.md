@@ -94,7 +94,10 @@ paths to the module's own dir.
   session with `chat.prime_session` (one headless `claude -p`, no image, returns a
   `session_id`), and writes dormant `state/<uuid>.json` (page `handled` + the
   `session_id`). Continuity REQUIRES running here — the watcher resumes the
-  `session_id` from this host's local Claude Code session store.
+  `session_id` from this host's local Claude Code session store. The headless CLI
+  is invoked as `config.CLAUDE_BIN` (default `claude` on PATH; set
+  `RECLAUDABLE_CLAUDE_BIN` to an absolute path — non-interactive SSH PATH omits
+  `~/.local/bin`, else priming fails with `FileNotFoundError: 'claude'`).
 - `watcher.py` — polls `.root.history`; on change runs a turn per `Claude`-folder
   notebook. Logs to `logs/watcher.log`. Launch via `watcherctl.sh`.
 - `bin/rmapi` — wrapper that runs the built `rmapi` (juruen/rmapi, sync 1.5) with

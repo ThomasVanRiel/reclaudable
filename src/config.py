@@ -48,6 +48,10 @@ MODEL_LABEL = _get("RECLAUDABLE_MODEL_LABEL", "Claude Opus 4.8")
 # Stable cwd for the headless reply-Claude (sessions are keyed by working dir).
 CLAUDE_CWD = Path(_get("RECLAUDABLE_CLAUDE_CWD",
                        str(Path.home() / ".reclaudable" / "claude-cwd")))
+# The `claude` CLI. Default resolves via PATH (fine for the watcher, launched from
+# a login shell). Set an absolute path for non-interactive SSH (e.g. the import
+# skill), whose minimal PATH omits ~/.local/bin — same reason RMAPI_BIN is absolute.
+CLAUDE_BIN = _get("RECLAUDABLE_CLAUDE_BIN", "claude")
 
 # --- rmapi write-back (also read directly by bin/rmapi) ---
 RMAPI_HOST = _get("RECLAUDABLE_RMAPI_HOST", "https://example.com")
