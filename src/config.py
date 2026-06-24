@@ -54,7 +54,7 @@ CLAUDE_CWD = Path(_get("RECLAUDABLE_CLAUDE_CWD",
 CLAUDE_BIN = _get("RECLAUDABLE_CLAUDE_BIN", "claude")
 
 # --- rmapi write-back (also read directly by bin/rmapi) ---
-RMAPI_HOST = _get("RECLAUDABLE_RMAPI_HOST", "https://remarkable.example.com")
+RMAPI_HOST = _get("RECLAUDABLE_RMAPI_HOST", "https://example.com")
 RMAPI_BIN = _get("RECLAUDABLE_RMAPI_BIN",
                  str(Path.home() / "source" / "rmapi" / "rmapi"))
 
