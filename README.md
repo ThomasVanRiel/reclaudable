@@ -142,6 +142,22 @@ tail -f logs/watcher.log
 You can also confirm activity server-side in `docker logs <container>` (each turn is
 a burst of `PUT /sync/v3/files…` → `PUT /sync/v3/root` → `got sync completed`).
 
+### Email a report
+
+Write "email me the report" (or "send me a summary of this") on a page and Claude
+compiles the whole conversation into a complete, structured document and emails it
+to you. The page itself just shows a short "emailed it" confirmation; the full
+write-up arrives as a rich-HTML email with a `report.md` attachment.
+
+Delivery is plain SMTP — set `RECLAUDABLE_SMTP_*` in `.env` (you can copy the
+values from rmfakecloud's `RM_SMTP_*`); `RECLAUDABLE_EMAIL_TO` is the recipient and
+defaults to the from address. Test it without the tablet:
+
+```sh
+.venv/bin/python mailer.py --dry-run   # print the assembled message, don't send
+.venv/bin/python mailer.py --send      # actually email a canned report to EMAIL_TO
+```
+
 ## Layout
 
 | File | Purpose |
@@ -151,6 +167,7 @@ a burst of `PUT /sync/v3/files…` → `PUT /sync/v3/root` → `got sync complet
 | `writeback.py`| Turn reply text into a framed `.rm` page (via `rmscene`) and append it to a notebook, uploading with `rmapi`. |
 | `chat.py` | Run a single turn for one notebook (read newest page → Claude → append reply, or skip if it isn't a request yet). |
 | `persona.md` | How Claude behaves when replying on the tablet — edit this to change its tone/rules. |
+| `mailer.py` | Parse a reply's `<<EMAIL>>` block and send it as a multipart report (plain + HTML + `report.md`) over SMTP. |
 | `watcher.py` | Watch for syncs and run turns automatically. |
 | `watcherctl.sh` | Start/stop/status/restart the watcher. |
 | `poc.py` | Read-only demo: render newest page → Claude → print reply (no write-back). |

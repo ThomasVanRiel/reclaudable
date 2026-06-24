@@ -52,3 +52,14 @@ CLAUDE_CWD = Path(_get("RECLAUDABLE_CLAUDE_CWD",
 RMAPI_HOST = _get("RECLAUDABLE_RMAPI_HOST", "https://example.com")
 RMAPI_BIN = _get("RECLAUDABLE_RMAPI_BIN",
                  str(Path.home() / "source" / "rmapi" / "rmapi"))
+
+# --- email a report (see mailer.py) ---
+# SMTP for delivering a compiled report when the user asks to "email me ...".
+# These mirror rmfakecloud's RM_SMTP_* values — copy them into reclaudable's own
+# .env once (kept separate so the two stay decoupled). SMTP_FROM defaults to the
+# login; EMAIL_TO (the fixed recipient — "email me") defaults to the from address.
+SMTP_SERVER = _get("RECLAUDABLE_SMTP_SERVER", "smtp.gmail.com:465")
+SMTP_USERNAME = _get("RECLAUDABLE_SMTP_USERNAME", "")
+SMTP_PASSWORD = _get("RECLAUDABLE_SMTP_PASSWORD", "")
+SMTP_FROM = _get("RECLAUDABLE_SMTP_FROM", "") or SMTP_USERNAME
+EMAIL_TO = _get("RECLAUDABLE_EMAIL_TO", "") or SMTP_FROM

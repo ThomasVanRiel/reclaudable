@@ -19,9 +19,10 @@ import sys
 import traceback
 from pathlib import Path
 
+import mailer
 import rmstore as R
 import writeback as W
-from config import CLAUDE_FOLDER, CLAUDE_CWD, MODEL_LABEL  # host config; see .env
+from config import CLAUDE_FOLDER, CLAUDE_CWD, EMAIL_TO, MODEL_LABEL  # host config; see .env
 
 HERE = Path(__file__).parent
 STATE_DIR = HERE / "state"
@@ -86,8 +87,9 @@ def call_claude(png: Path, resume: str | None) -> dict:
               f"reply with exactly {WAIT_SENTINEL} and nothing else. Otherwise "
               "respond per your instructions.")
     CLAUDE_CWD.mkdir(parents=True, exist_ok=True)
+    # Headroom for large turns: an exhaustive emailed report is a big generation.
     out = subprocess.run(cmd, input=prompt, text=True, capture_output=True,
-                         timeout=300, cwd=CLAUDE_CWD)
+                         timeout=600, cwd=CLAUDE_CWD)
     # claude prints a JSON result even on error; parse it for a clean signal.
     try:
         data = json.loads(out.stdout)
@@ -98,6 +100,26 @@ def call_claude(png: Path, resume: str | None) -> dict:
             raise RateLimited(data.get("result", "session limit"))
         raise RuntimeError(f"claude error: {data.get('result')}")
     return data
+
+
+def _deliver(nb: R.Doc, reply: str) -> str:
+    """If the reply carries an `<<EMAIL>>…<<END>>` block, send it and return the
+    page prose (block stripped). On send failure, append a short note to the prose
+    so the device still shows a reply explaining the email didn't go out. Replies
+    with no email block pass through unchanged."""
+    prose, spec = mailer.parse_email(reply)
+    if spec is None:
+        return reply
+    try:
+        to = mailer.send_report(spec, to=EMAIL_TO, notebook_name=nb.visible_name)
+        print(f"{nb.visible_name!r}: emailed report to {to}")
+    except Exception as exc:
+        detail = next((ln for ln in str(exc).splitlines() if ln.strip()),
+                      exc.__class__.__name__)
+        print(f"{nb.visible_name!r}: email send failed: {detail}")
+        prose += ("\n\n(Note: I couldn't send the email just now — "
+                  f"{detail.strip()[:160]}. The report is ready; ask again to retry.)")
+    return prose
 
 
 def main() -> None:
@@ -167,7 +189,8 @@ def process_notebook(nb: R.Doc) -> bool:
 
         print("\n----- reply -----\n" + reply + "\n-----------------")
 
-        W.append_page(nb.uuid, reply, folder=CLAUDE_FOLDER,
+        prose = _deliver(nb, reply)
+        W.append_page(nb.uuid, prose, folder=CLAUDE_FOLDER,
                       visible_name=nb.visible_name, model_label=MODEL_LABEL)
 
         # record the answered page AND our freshly-created page so neither retriggers.
@@ -259,7 +282,8 @@ def _retry_pending(nb: R.Doc, state: dict) -> bool:
             return False
 
         print("\n----- reply -----\n" + reply + "\n-----------------")
-        W.replace_page(nb.uuid, placeholder, reply, folder=CLAUDE_FOLDER,
+        prose = _deliver(nb, reply)
+        W.replace_page(nb.uuid, placeholder, prose, folder=CLAUDE_FOLDER,
                        visible_name=nb.visible_name, model_label=MODEL_LABEL)
         state["session_id"] = result.get("session_id")
         state.pop("pending", None)

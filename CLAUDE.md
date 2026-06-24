@@ -64,6 +64,17 @@ Not a per-notebook folder: a git-like blob store. Data dir
   text block per page), so `hershey.py` is a tiny single-stroke font that draws
   them as strokes (uppercase/digits/punct; lowercase folds to uppercase). rmc
   already renders `Line` strokes, so `render.py` is unchanged.
+- `mailer.py` — the "email a report" channel. The reply-Claude may emit ONE
+  `<<EMAIL subject="…">>…<<END>>` block (opt-in; grammar in `persona.md`) holding a
+  full rich-markdown document compiled from the whole conversation. `parse_email`
+  splits prose from an `EmailSpec` (same split-and-strip shape as `draw.parse_draw`);
+  `chat._deliver` sends it and writes only the prose to the page (block never
+  rendered). `send_report` builds a `multipart/mixed` message — `text/plain`
+  (markdown source), `text/html` (markdown→HTML via the `markdown` lib; falls back
+  to `<pre>` if absent), and a `report.md` attachment — and sends via `smtplib`
+  (`SMTP_SSL` for port 465, else STARTTLS). SMTP config is `RECLAUDABLE_SMTP_*` in
+  `.env` (copied from rmfakecloud's `RM_SMTP_*`); `EMAIL_TO` defaults to the from
+  address. Markdown is BANNED on the page but EMBRACED in the email.
 - `chat.py` — one turn: pick last content page → render → headless Claude
   (`process_notebook`, raises `RateLimited`) → append reply. State in
   `state/<uuid>.json`. The reply persona is loaded from `persona.md` (passed via
@@ -106,6 +117,12 @@ Not a per-notebook folder: a git-like blob store. Data dir
   complete prompt or an explicit ask (review/thoughts/go/?, semantic not literal)
   triggers a real answer. `<<WAIT>>` reads cost one model call each and don't update
   `session_id` (kept out of the resumed conversation). Gate lives in `persona.md`.
+- **Email-report turn:** when a reply carries an `<<EMAIL>>…<<END>>` block,
+  `chat._deliver` (called in BOTH `process_notebook` and `_retry_pending`, before
+  writeback) sends the email and writes only the stripped prose to the page; on
+  send failure it appends a short note to the prose so the device still shows why.
+  An exhaustive report is a big generation — `call_claude`'s subprocess `timeout`
+  was raised to 600s for it. Sending is a normal turn (updates `session_id`).
 - **Backend rate limit is real:** Pro returns `is_error`/`429` "session limit";
   `chat` raises `RateLimited`, watcher backs off. Not a bug.
 - **Back up before writes:** root pointers (`.root.history`/`.tree`) saved in
