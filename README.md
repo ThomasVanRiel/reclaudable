@@ -165,6 +165,33 @@ defaults to the from address. Test it without the tablet:
 .venv/bin/python mailer.py --send      # actually email a canned report to EMAIL_TO
 ```
 
+### Import a conversation (the `/reclaudable` skill)
+
+The reverse of emailing out: take a conversation you're having in *any* Claude Code
+session and continue it on paper. Type `/reclaudable` (or `/reclaudable <title>`)
+and it creates a new notebook in the device's `Claude/` folder seeded with a clean
+summary, and primes a server-side session so your first handwritten follow-up
+continues with that context. The notebook arrives dormant — Claude doesn't reply
+until you write on it.
+
+The skill ships in the repo at `skills/reclaudable/`. Install it as a personal
+skill on each machine you work from:
+
+```sh
+ln -s "$PWD/skills/reclaudable" ~/.claude/skills/reclaudable
+```
+
+Because the import (notebook upload + session priming) must run on the reclaudable
+server, the skill sends the summary there over **SSH** — set the `SSH_HOST` and the
+server-side command at the top of `skills/reclaudable/SKILL.md`. Your work machines
+need only key-based SSH to the server. The server side is `import_nb.py`, which
+reads a `{"title", "summary"}` JSON payload on stdin:
+
+```sh
+ssh myserver '.../.venv/bin/python .../import_nb.py' < payload.json
+.venv/bin/python import_nb.py --name "Title" --summary-file summary.md   # local test
+```
+
 ## Layout
 
 | File | Purpose |
@@ -178,6 +205,8 @@ defaults to the from address. Test it without the tablet:
 | `draw.py` | Parse a reply's `<<DRAW>>` block into `.rm` pen strokes drawn below the text. |
 | `hershey.py` | Tiny single-stroke font for the text labels inside drawn figures. |
 | `mailer.py` | Parse a reply's `<<EMAIL>>` block and send it as a multipart report (plain + HTML + `report.md`) over SMTP. |
+| `import_nb.py` | Create a new notebook from a summary (stdin payload) and prime its session — backs the `/reclaudable` skill. |
+| `skills/reclaudable/` | The `/reclaudable` personal skill (symlink into `~/.claude/skills/`) that sends a conversation here over SSH. |
 | `watcher.py` | Watch for syncs and run turns automatically. |
 | `watcherctl.sh` | Start/stop/status/restart the watcher. |
 | `poc.py` | Read-only demo: render newest page → Claude → print reply (no write-back). |

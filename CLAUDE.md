@@ -81,6 +81,15 @@ Not a per-notebook folder: a git-like blob store. Data dir
   `--append-system-prompt`); the reply-Claude runs in `CLAUDE_CWD` (from `.env`,
   default `~/.reclaudable/claude-cwd`, outside the repo) so THIS `CLAUDE.md` never
   enters its context. Don't put the reMarkable persona here — it goes in `persona.md`.
+- `import_nb.py` + `skills/reclaudable/` — the inbound path (`/reclaudable` skill).
+  The skill runs in any external Claude Code session (on a remote machine), compiles
+  a summary, and pipes `{title, summary}` JSON over SSH to `import_nb.py` here.
+  `import_nb` builds a NEW notebook via `writeback.create_notebook` (fresh bundle +
+  `rmapi put`, no `get`; parent = `find_folder(CLAUDE_FOLDER).uuid`), primes a
+  session with `chat.prime_session` (one headless `claude -p`, no image, returns a
+  `session_id`), and writes dormant `state/<uuid>.json` (page `handled` + the
+  `session_id`). Continuity REQUIRES running here — the watcher resumes the
+  `session_id` from this host's local Claude Code session store.
 - `watcher.py` — polls `.root.history`; on change runs a turn per `Claude`-folder
   notebook. Logs to `logs/watcher.log`. Launch via `watcherctl.sh`.
 - `bin/rmapi` — wrapper that runs the built `rmapi` (juruen/rmapi, sync 1.5) with
@@ -123,6 +132,14 @@ Not a per-notebook folder: a git-like blob store. Data dir
   send failure it appends a short note to the prose so the device still shows why.
   An exhaustive report is a big generation — `call_claude`'s subprocess `timeout`
   was raised to 600s for it. Sending is a normal turn (updates `session_id`).
+- **Imported notebooks arrive dormant:** `import_nb.py` writes
+  `state/<uuid>.json` with `{"importing": true}` BEFORE `rmapi put`, so the watcher
+  skips the notebook while the (slow) priming call runs — `process_notebook` returns
+  early on that flag. It's cleared in the final state write (page `handled` +
+  `session_id`). The seeded summary page is also usually under `BLANK_RM_MAX_BYTES`
+  (text encodes compactly, ~400–900 B) so it's blank-skipped too — belt and
+  suspenders. The page renderer is NOT deterministic, so dormancy can't rely on a
+  pre-computed page hash; the `importing` flag is the real guard.
 - **Backend rate limit is real:** Pro returns `is_error`/`429` "session limit";
   `chat` raises `RateLimited`, watcher backs off. Not a bug.
 - **Back up before writes:** root pointers (`.root.history`/`.tree`) saved in

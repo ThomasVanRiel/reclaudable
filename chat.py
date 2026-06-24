@@ -75,17 +75,16 @@ class RateLimited(Exception):
     """Backend (Claude Code on Pro) hit its usage/session limit."""
 
 
-def call_claude(png: Path, resume: str | None) -> dict:
+def _run_claude(prompt: str, resume: str | None = None) -> dict:
+    """Run one headless `claude -p` call with the reply persona, parse its JSON
+    result, and translate errors (429 -> RateLimited). Shared by the turn loop
+    (call_claude) and session priming (prime_session)."""
     cmd = ["claude", "-p", "--output-format", "json",
            "--permission-mode", "bypassPermissions",
            "--allowedTools", "Read,WebSearch,WebFetch",
            "--append-system-prompt", PERSONA]
     if resume:
         cmd += ["--resume", resume]
-    prompt = (f"New or edited handwritten page from the user. Read the image at "
-              f"{png}. If it is an unfinished draft or has no request for you, "
-              f"reply with exactly {WAIT_SENTINEL} and nothing else. Otherwise "
-              "respond per your instructions.")
     CLAUDE_CWD.mkdir(parents=True, exist_ok=True)
     # Headroom for large turns: an exhaustive emailed report is a big generation.
     out = subprocess.run(cmd, input=prompt, text=True, capture_output=True,
@@ -100,6 +99,27 @@ def call_claude(png: Path, resume: str | None) -> dict:
             raise RateLimited(data.get("result", "session limit"))
         raise RuntimeError(f"claude error: {data.get('result')}")
     return data
+
+
+def call_claude(png: Path, resume: str | None) -> dict:
+    prompt = (f"New or edited handwritten page from the user. Read the image at "
+              f"{png}. If it is an unfinished draft or has no request for you, "
+              f"reply with exactly {WAIT_SENTINEL} and nothing else. Otherwise "
+              "respond per your instructions.")
+    return _run_claude(prompt, resume)
+
+
+def prime_session(summary_text: str) -> str:
+    """Seed a fresh reclaudable session with a summary of an imported conversation
+    and return its session_id (to store in state so the first handwritten page
+    resumes it). The model just acknowledges with <<WAIT>>; we keep the session_id,
+    not the reply. Raises RateLimited if the backend is throttled."""
+    prompt = ("You're being handed a summary of an earlier conversation to continue "
+              "inside a reMarkable notebook. Read it for context; the user will "
+              "continue the thread by handwriting new pages. Do not produce a page "
+              f"now — reply with exactly {WAIT_SENTINEL} and nothing else.\n\n"
+              "--- SUMMARY ---\n" + summary_text)
+    return _run_claude(prompt).get("session_id")
 
 
 def _deliver(nb: R.Doc, reply: str) -> str:
@@ -150,6 +170,12 @@ def process_notebook(nb: R.Doc) -> bool:
     from render import rm_bytes_to_png
 
     state = load_state(nb.uuid)
+    if state.get("importing"):
+        # import_nb.py wrote this flag before uploading the seeded notebook and
+        # clears it once the page is marked handled + the session primed. Skip until
+        # then so we never auto-reply to an import mid-creation.
+        print(f"{nb.visible_name!r}: import in progress — skip.")
+        return False
     if state.get("pending"):
         # A rate-limited turn left a placeholder page owed a real answer. Resolve
         # that first (rewrite it in place) before looking at any newer page.

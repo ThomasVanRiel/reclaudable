@@ -266,6 +266,105 @@ def replace_page(notebook_uuid: str, page_uuid: str, reply_text: str,
     return _with_bundle(folder, visible_name, mutate, dry_run)
 
 
+def create_notebook(visible_name: str, pages_text: list[str], *,
+                    folder: str = CLAUDE_FOLDER, parent_uuid: str = "",
+                    doc_uuid: str | None = None, page_ids: list[str] | None = None,
+                    dry_run: bool = False) -> tuple[str, list[str]]:
+    """Build a brand-new notebook bundle (fresh UUID) and upload it to /folder.
+
+    Unlike append_page/replace_page (which round-trip an existing doc via
+    `_with_bundle`), this constructs `.content`/`.metadata`/page `.rm` files from
+    scratch and `rmapi put`s them — no `get` first. `parent_uuid` is the folder's
+    UUID (resolve with rmstore.find_folder). `doc_uuid` may be supplied so the
+    caller can write state under it before upload (`page_ids` likewise); otherwise
+    they're generated. Returns (doc_uuid, [page_uuids])."""
+    doc_uuid = doc_uuid or str(uuid.uuid4())
+    if page_ids is not None and len(page_ids) != len(pages_text):
+        raise ValueError("page_ids must match pages_text length")
+    work = Path(tempfile.mkdtemp(prefix="rmnb-"))
+    try:
+        root = work / "bundle"
+        page_dir = root / doc_uuid
+        page_dir.mkdir(parents=True)
+
+        ids = list(page_ids) if page_ids is not None else [
+            str(uuid.uuid4()) for _ in pages_text]
+        pages_meta: list[dict] = []
+        idx = ""
+        for pid, text in zip(ids, pages_text):
+            _text_to_rm(text, page_dir / f"{pid}.rm")
+            idx = _next_idx(idx)   # first page -> "ba", then "bb", …
+            pages_meta.append({
+                "id": pid,
+                "idx": {"timestamp": "1:2", "value": idx},
+                "template": {"timestamp": "1:1", "value": "Blank"},
+            })
+
+        content = {
+            "formatVersion": 2,
+            "fileType": "notebook",
+            "orientation": "portrait",
+            "pageCount": len(ids),
+            "coverPageNumber": -1,
+            "lineHeight": -1,
+            "textScale": 1,
+            "textAlignment": "justify",
+            "fontName": "",
+            "zoomMode": "bestFit",
+            "tags": [],
+            "pageTags": [],
+            "documentMetadata": {},
+            "extraMetadata": {},
+            "cPages": {
+                "lastOpened": {"timestamp": "1:1", "value": ids[0]},
+                "original": {"timestamp": "0:0", "value": -1},
+                "pages": pages_meta,
+                "uuids": [{"first": str(uuid.uuid4()), "second": len(ids)}],
+            },
+        }
+        (root / f"{doc_uuid}.content").write_text(json.dumps(content))
+
+        now_ms = str(int(time.time() * 1000))
+        metadata = {
+            "createdTime": now_ms,
+            "lastModified": now_ms,
+            "lastOpened": now_ms,
+            "lastOpenedPage": 0,
+            "parent": parent_uuid,
+            "pinned": False,
+            "type": "DocumentType",
+            "visibleName": visible_name,
+            "deleted": False,
+            "metadatamodified": False,
+            "modified": False,
+            "synced": False,
+            "version": 0,
+            "source": "",
+        }
+        (root / f"{doc_uuid}.metadata").write_text(json.dumps(metadata))
+
+        out_zip = work / f"{visible_name}.zip"
+        with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
+            for f in sorted(root.rglob("*")):
+                if f.is_file():
+                    z.write(f, f.relative_to(root).as_posix())
+
+        if dry_run:
+            keep = HERE / "renders" / f"{visible_name}.new.zip"
+            keep.parent.mkdir(exist_ok=True)
+            shutil.copy(out_zip, keep)
+            print(f"[dry-run] new notebook bundle: {keep} (doc {doc_uuid})")
+            return doc_uuid, ids
+
+        put = _rmapi("put", str(out_zip), f"/{folder}", check=False)
+        if put.returncode != 0:
+            raise RuntimeError(f"rmapi put failed: {put.stderr or put.stdout}")
+        print(f"created notebook {visible_name!r} ({doc_uuid}) in /{folder}")
+        return doc_uuid, page_ids
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def remove_page(notebook_uuid: str, page_uuid: str,
                 folder: str = CLAUDE_FOLDER, visible_name: str | None = None,
                 dry_run: bool = False) -> str:
