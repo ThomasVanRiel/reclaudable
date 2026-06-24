@@ -51,16 +51,23 @@ def _next_idx(idx: str) -> str:
 POS_X = -585.0
 WIDTH = 1209.0
 # Hard-wrap width, in chars. The device ALSO auto-wraps typed text to the
-# WIDTH=1209px box (~48 device-font chars), so keep this at/under ~48 or lines
-# double-wrap into ragged rows. We deliberately wrap a bit narrow: you likes
-# the right margin it leaves for annotating replies by hand. (76 was wrong — it
-# was tuned to rmc's small 7pt reading-render, not the larger device font.)
-WRAP_WIDTH = 46
+# WIDTH=1209px box; that box renders as ~100mm on-device and holds ~57 narrow
+# prose chars across it, so keep this at/under ~57 or lines double-wrap into
+# ragged rows. NOTE this is decoupled from BANNER_WIDTH on purpose: the `─` glyph
+# is em-width, so far fewer of THEM fill the same box (see BANNER_WIDTH). At 46
+# the column came out ~80mm of the ~100mm box; 57 fills it while leaving a hair of
+# right margin kept for hand-annotating replies. (76 was wrong — it was
+# tuned to rmc's small 7pt reading-render, not the larger device font.)
+WRAP_WIDTH = 57
 
-# Horizontal rule for the reply frame. One WRAP_WIDTH-char token, so _wrap leaves
-# it on a single line. If the `─` glyph is ever missing from the device's
-# typed-text font, switch to "-" * WRAP_WIDTH.
-BANNER = "─" * WRAP_WIDTH
+# Horizontal rule for the reply frame. The em-width `─` glyph fills the WIDTH=1209px
+# box at ~46 chars (the box's full ~100mm), which is WIDER than WRAP_WIDTH counts of
+# a narrow prose glyph — hence its own constant. It's one space-free token, so _wrap
+# never breaks it (textwrap won't split a word shorter than WRAP_WIDTH). If the `─`
+# glyph is ever missing from the device's typed-text font, switch to "-" * a count
+# tuned to fill the box with that narrower glyph.
+BANNER_WIDTH = 46
+BANNER = "─" * BANNER_WIDTH
 
 # Drawing placement (see draw.py). When a reply carries a `<<DRAW>>` figure, we put
 # it BELOW the text: text flows from pos_y down, and we drop the figure at

@@ -63,8 +63,11 @@ def main() -> None:
     if folder is None:
         sys.exit(f"import: no {CLAUDE_FOLDER!r} folder on the device yet")
 
+    # Frame the seeded page like a reply (BANNER / header / BANNER / blank / body)
+    # so imported notebooks get the same separator rules the watcher's replies do —
+    # create_notebook renders text verbatim, so we build the frame here.
     header = f"Imported from Claude Code · {datetime.datetime.now():%-d %B %Y}"
-    page_text = f"{header}\n\n{summary}"
+    page_text = "\n".join([W.BANNER, header, W.BANNER, "", summary])
 
     # Reserve the doc UUID and flag it 'importing' BEFORE upload, so if the watcher
     # sees the notebook before we finish (priming is a live Claude call) it skips it
