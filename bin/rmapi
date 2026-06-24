@@ -15,5 +15,8 @@ envval() {  # envval KEY -> value from .env (last match), surrounding quotes str
 
 HOST=${RECLAUDABLE_RMAPI_HOST:-$(envval RECLAUDABLE_RMAPI_HOST)}
 BIN=${RECLAUDABLE_RMAPI_BIN:-$(envval RECLAUDABLE_RMAPI_BIN)}
-exec env RMAPI_HOST="${HOST:-https://example.com}" \
-  "${BIN:-/home/you/source/rmapi/rmapi}" "$@"
+# No host-specific fallbacks: these are private, so they live only in .env (or the
+# environment). Fail loudly rather than silently target a placeholder host.
+[ -n "$HOST" ] || { echo "rmapi: RECLAUDABLE_RMAPI_HOST not set (see .env.example)" >&2; exit 1; }
+[ -n "$BIN" ] || { echo "rmapi: RECLAUDABLE_RMAPI_BIN not set (see .env.example)" >&2; exit 1; }
+exec env RMAPI_HOST="$HOST" "$BIN" "$@"

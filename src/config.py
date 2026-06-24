@@ -38,7 +38,7 @@ def _get(name: str, default: str) -> str:
 
 
 # --- rmfakecloud storage (sync15 reader) ---
-RM_USER = _get("RECLAUDABLE_RM_USER", "you")
+RM_USER = _get("RECLAUDABLE_RM_USER", "user")
 CONTAINER = _get("RECLAUDABLE_CONTAINER", "rmfakecloud")
 SYNC = _get("RECLAUDABLE_SYNC_DIR", f"/data/users/{RM_USER}/sync")
 
@@ -54,7 +54,7 @@ CLAUDE_CWD = Path(_get("RECLAUDABLE_CLAUDE_CWD",
 CLAUDE_BIN = _get("RECLAUDABLE_CLAUDE_BIN", "claude")
 
 # --- rmapi write-back (also read directly by bin/rmapi) ---
-RMAPI_HOST = _get("RECLAUDABLE_RMAPI_HOST", "https://example.com")
+RMAPI_HOST = _get("RECLAUDABLE_RMAPI_HOST", "https://remarkable.example.com")
 RMAPI_BIN = _get("RECLAUDABLE_RMAPI_BIN",
                  str(Path.home() / "source" / "rmapi" / "rmapi"))
 
