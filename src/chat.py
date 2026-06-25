@@ -20,9 +20,11 @@ import traceback
 from pathlib import Path
 
 import mailer
+import rename as RN
 import rmstore as R
 import writeback as W
-from config import CLAUDE_BIN, CLAUDE_FOLDER, CLAUDE_CWD, EMAIL_TO, MODEL_LABEL  # host config; see .env
+from config import (AUTO_RENAME, CLAUDE_BIN, CLAUDE_FOLDER, CLAUDE_CWD, EMAIL_TO,
+                    MODEL_LABEL)  # host config; see .env
 
 # Repo root (this module lives in src/); state/, renders/ and persona.md sit there.
 ROOT = Path(__file__).resolve().parent.parent
@@ -115,8 +117,21 @@ def _sketch_manifest(sketches: list[dict] | None) -> str:
             "emailed report (only when relevant) as ![caption](sketch:ID): " + listed)
 
 
+def _rename_hint(current_name: str | None) -> str:
+    """Instruction appended to the turn prompt when the notebook still has a default
+    name — invites the model to propose a title via a <<RENAME>> block. Code has
+    already decided the name is a default (see rename.is_default_name); the model
+    only supplies the string."""
+    return (f"This notebook still has its auto-generated default name "
+            f"({current_name!r}). If this page and the conversation so far make the "
+            f"topic clear, end your reply with ONE <<RENAME>>Short Title<<END>> "
+            f"block giving a short, specific title (a few words, Title Case, no "
+            f"punctuation-heavy or markdown). If it's too early to tell, omit it.")
+
+
 def call_claude(png: Path, strokes_png: Path, resume: str | None,
-                sketches: list[dict] | None = None) -> dict:
+                sketches: list[dict] | None = None,
+                rename_hint: str | None = None) -> dict:
     prompt = (
         f"New or edited handwritten page from the user. Read the image at {png} — "
         f"that is the page exactly as the user sees it, including any earlier typed "
@@ -132,6 +147,8 @@ def call_claude(png: Path, strokes_png: Path, resume: str | None,
     manifest = _sketch_manifest(sketches)
     if manifest:
         prompt += "\n\n" + manifest
+    if rename_hint:
+        prompt += "\n\n" + rename_hint
     return _run_claude(prompt, resume)
 
 
@@ -279,8 +296,10 @@ def process_notebook(nb: R.Doc) -> bool:
         rm_bytes_to_png(page_bytes, png)                 # full page: read annotations
         strokes_png = _render_strokes(page_bytes, strokes_png, png, nb)  # ink only
 
+        want_rename = AUTO_RENAME and RN.is_default_name(nb.visible_name)
         result = call_claude(png, strokes_png, state.get("session_id"),
-                             sketches=state.get("sketches"))
+                             sketches=state.get("sketches"),
+                             rename_hint=_rename_hint(nb.visible_name) if want_rename else None)
         reply = result.get("result", "").strip()
 
         # The page isn't a request yet (unfinished draft, or no ask) — don't reply.
@@ -296,8 +315,13 @@ def process_notebook(nb: R.Doc) -> bool:
 
         prose = _capture_sketches(nb, strokes_png, reply, state, page_uuid)
         prose = _deliver(nb, prose, state)
+        prose, new_name = RN.parse_rename(prose)
+        new_name = new_name if want_rename else None   # never rename a user-named book
+        if new_name:
+            print(f"{nb.visible_name!r}: renaming notebook -> {new_name!r}")
         W.append_page(nb.uuid, prose, folder=CLAUDE_FOLDER,
-                      visible_name=nb.visible_name, model_label=MODEL_LABEL)
+                      visible_name=nb.visible_name, model_label=MODEL_LABEL,
+                      rename=new_name)
 
         # record the answered page AND our freshly-created page so neither retriggers.
         state["session_id"] = result.get("session_id")
@@ -377,8 +401,10 @@ def _retry_pending(nb: R.Doc, state: dict) -> bool:
         rm_bytes_to_png(page_bytes, png)
         strokes_png = _render_strokes(page_bytes, strokes_png, png, nb)
 
+        want_rename = AUTO_RENAME and RN.is_default_name(nb.visible_name)
         result = call_claude(png, strokes_png, state.get("session_id"),
-                             sketches=state.get("sketches"))
+                             sketches=state.get("sketches"),
+                             rename_hint=_rename_hint(nb.visible_name) if want_rename else None)
         reply = result.get("result", "").strip()
 
         # The rate-limit may have fired on a page that was only a mid-edit draft.
@@ -394,8 +420,13 @@ def _retry_pending(nb: R.Doc, state: dict) -> bool:
         print("\n----- reply -----\n" + reply + "\n-----------------")
         prose = _capture_sketches(nb, strokes_png, reply, state, source_uuid)
         prose = _deliver(nb, prose, state)
+        prose, new_name = RN.parse_rename(prose)
+        new_name = new_name if want_rename else None   # never rename a user-named book
+        if new_name:
+            print(f"{nb.visible_name!r}: renaming notebook -> {new_name!r}")
         W.replace_page(nb.uuid, placeholder, prose, folder=CLAUDE_FOLDER,
-                       visible_name=nb.visible_name, model_label=MODEL_LABEL)
+                       visible_name=nb.visible_name, model_label=MODEL_LABEL,
+                       rename=new_name)
         state["session_id"] = result.get("session_id")
         state.pop("pending", None)
         _record_created_page(nb.uuid, state)   # rewritten page has a NEW hash

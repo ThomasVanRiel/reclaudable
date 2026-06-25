@@ -42,9 +42,19 @@ RM_USER = _get("RECLAUDABLE_RM_USER", "user")
 CONTAINER = _get("RECLAUDABLE_CONTAINER", "rmfakecloud")
 SYNC = _get("RECLAUDABLE_SYNC_DIR", f"/data/users/{RM_USER}/sync")
 
+def _get_bool(name: str, default: bool) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
 # --- conversation behaviour ---
 CLAUDE_FOLDER = _get("RECLAUDABLE_FOLDER", "Claude")
 MODEL_LABEL = _get("RECLAUDABLE_MODEL_LABEL", "Claude Opus 4.8")
+# Auto-rename notebooks that still carry a default device name (timestamp,
+# `Notebook N`, blank/Untitled) to a title the reply-Claude proposes. See rename.py.
+AUTO_RENAME = _get_bool("RECLAUDABLE_AUTO_RENAME", True)
 # Stable cwd for the headless reply-Claude (sessions are keyed by working dir).
 CLAUDE_CWD = Path(_get("RECLAUDABLE_CLAUDE_CWD",
                        str(Path.home() / ".reclaudable" / "claude-cwd")))

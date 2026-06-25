@@ -155,7 +155,7 @@ def _render_reply(reply_text: str, model_label: str, out_rm: Path) -> None:
 
 
 def _with_bundle(folder: str, visible_name: str | None,
-                 mutate, dry_run: bool = False) -> str:
+                 mutate, dry_run: bool = False, new_name: str | None = None) -> str:
     """Round-trip a notebook bundle and apply an in-place edit.
 
     Downloads (`rmapi get`) → unpacks → loads `.content` → calls
@@ -163,6 +163,10 @@ def _with_bundle(folder: str, visible_name: str | None,
     `content` dict in place and returns the affected page UUID) → re-zips →
     `rmapi rm`+`put`. The whole store is content-addressed, so this same cycle can
     append, overwrite, or remove any page — the only difference is `mutate`.
+
+    `new_name`, if given, renames the notebook in the SAME round-trip: the unpacked
+    `.metadata`'s `visibleName` is patched (the bundle already contains it, so this
+    costs no extra `get`/`put`, and the doc UUID is unchanged so state stays valid).
 
     Returns the page UUID `mutate` reports. With `dry_run`, writes the modified zip
     to `renders/` and skips the device mutation."""
@@ -192,22 +196,33 @@ def _with_bundle(folder: str, visible_name: str | None,
         page = mutate(unp, content, doc_uuid)
         content_path.write_text(json.dumps(content))
 
-        # 4. re-zip with the SAME visibleName (put keeps the name; UUID comes from
-        #    the internal files)
-        out_zip = work / f"{visible_name}.zip"
+        # 3b. optionally rename: patch visibleName in the unpacked .metadata so the
+        #     renamed bundle goes up in this same put (no second round-trip).
+        if new_name:
+            meta_path = unp / f"{doc_uuid}.metadata"
+            meta = json.loads(meta_path.read_text())
+            meta["visibleName"] = new_name
+            meta["lastModified"] = str(int(time.time() * 1000))
+            meta["metadatamodified"] = True
+            meta_path.write_text(json.dumps(meta))
+
+        # 4. re-zip under the (possibly new) visibleName (the UUID comes from the
+        #    internal files; the displayed name comes from the .metadata)
+        upload_name = new_name or visible_name
+        out_zip = work / f"{upload_name}.zip"
         with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
             for f in sorted(unp.rglob("*")):
                 if f.is_file():
                     z.write(f, f.relative_to(unp).as_posix())
 
         if dry_run:
-            keep = ROOT / "renders" / f"{visible_name}.modified.zip"
+            keep = ROOT / "renders" / f"{upload_name}.modified.zip"
             keep.parent.mkdir(exist_ok=True)
             shutil.copy(out_zip, keep)
             print(f"[dry-run] modified bundle: {keep} (page {page})")
             return page
 
-        # 5. replace: rm old, put new
+        # 5. replace: rm old (by its current on-device name), put new
         rm = _rmapi("rm", f"/{folder}/{visible_name}", check=False)
         if rm.returncode != 0:
             raise RuntimeError(f"rmapi rm failed: {rm.stderr or rm.stdout}")
@@ -216,7 +231,11 @@ def _with_bundle(folder: str, visible_name: str | None,
             raise RuntimeError(
                 f"rmapi put failed (notebook was removed! restore from backup): "
                 f"{put.stderr or put.stdout}")
-        print(f"uploaded: page {page} -> /{folder}/{visible_name}")
+        if new_name:
+            print(f"uploaded: page {page} -> /{folder}/{upload_name} "
+                  f"(renamed from {visible_name!r})")
+        else:
+            print(f"uploaded: page {page} -> /{folder}/{upload_name}")
         return page
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -224,8 +243,10 @@ def _with_bundle(folder: str, visible_name: str | None,
 
 def append_page(notebook_uuid: str, reply_text: str,
                 folder: str = CLAUDE_FOLDER, visible_name: str | None = None,
-                model_label: str = "Claude", dry_run: bool = False) -> str:
-    """Append reply_text as a new page. Returns the new page UUID."""
+                model_label: str = "Claude", dry_run: bool = False,
+                rename: str | None = None) -> str:
+    """Append reply_text as a new page. Returns the new page UUID. `rename`, if
+    given, also renames the notebook to that title in the same round-trip."""
     new_page = str(uuid.uuid4())
 
     def mutate(unp: Path, content: dict, doc_uuid: str) -> str:
@@ -252,15 +273,17 @@ def append_page(notebook_uuid: str, reply_text: str,
         content["pageCount"] = content.get("pageCount", len(pages) - 1) + 1
         return new_page
 
-    return _with_bundle(folder, visible_name, mutate, dry_run)
+    return _with_bundle(folder, visible_name, mutate, dry_run, new_name=rename)
 
 
 def replace_page(notebook_uuid: str, page_uuid: str, reply_text: str,
                  folder: str = CLAUDE_FOLDER, visible_name: str | None = None,
-                 model_label: str = "Claude", dry_run: bool = False) -> str:
+                 model_label: str = "Claude", dry_run: bool = False,
+                 rename: str | None = None) -> str:
     """Overwrite an existing page's strokes in place with reply_text — same slot,
     same position. Used to turn a rate-limit placeholder into the real reply.
-    Returns page_uuid."""
+    Returns page_uuid. `rename`, if given, also renames the notebook in the same
+    round-trip."""
     def mutate(unp: Path, content: dict, doc_uuid: str) -> str:
         rm_path = unp / doc_uuid / f"{page_uuid}.rm"
         if not rm_path.exists():
@@ -271,7 +294,7 @@ def replace_page(notebook_uuid: str, page_uuid: str, reply_text: str,
                 p["modifed"] = str(int(time.time() * 1000))
         return page_uuid
 
-    return _with_bundle(folder, visible_name, mutate, dry_run)
+    return _with_bundle(folder, visible_name, mutate, dry_run, new_name=rename)
 
 
 def create_notebook(visible_name: str, pages_text: list[str], *,
