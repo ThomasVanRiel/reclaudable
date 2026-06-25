@@ -28,6 +28,7 @@ from config import CLAUDE_BIN, CLAUDE_FOLDER, CLAUDE_CWD, EMAIL_TO, MODEL_LABEL 
 ROOT = Path(__file__).resolve().parent.parent
 STATE_DIR = ROOT / "state"
 RENDER_DIR = ROOT / "renders"
+SKETCH_DIR = RENDER_DIR / "sketches"   # cropped user sketches, per-notebook subdir
 BLANK_RM_MAX_BYTES = 1000   # .rm files smaller than this carry no strokes
 
 # The reMarkable assistant's behaviour — edit persona.md to change it.
@@ -102,12 +103,50 @@ def _run_claude(prompt: str, resume: str | None = None) -> dict:
     return data
 
 
-def call_claude(png: Path, resume: str | None) -> dict:
-    prompt = (f"New or edited handwritten page from the user. Read the image at "
-              f"{png}. If it is an unfinished draft or has no request for you, "
-              f"reply with exactly {WAIT_SENTINEL} and nothing else. Otherwise "
-              "respond per your instructions.")
+def _sketch_manifest(sketches: list[dict] | None) -> str:
+    """One-line summary of sketches captured so far, for the turn prompt — so a
+    later 'email me a report' turn knows which crops it can reference. Empty when
+    none captured yet."""
+    items = sketches or []
+    if not items:
+        return ""
+    listed = ", ".join(f'{s["id"]}={s.get("caption") or "sketch"}' for s in items)
+    return ("Sketches captured from earlier pages that you may reference in an "
+            "emailed report (only when relevant) as ![caption](sketch:ID): " + listed)
+
+
+def call_claude(png: Path, strokes_png: Path, resume: str | None,
+                sketches: list[dict] | None = None) -> dict:
+    prompt = (
+        f"New or edited handwritten page from the user. Read the image at {png} — "
+        f"that is the page exactly as the user sees it, including any earlier typed "
+        f"reply of yours they may have annotated on top of (read those annotations "
+        f"in context). A SECOND image at {strokes_png} shows the SAME page with the "
+        f"typed text removed, leaving only pen strokes — the user's handwriting and "
+        f"any drawing. Read it too: use it to spot and precisely locate any "
+        f"sketch/drawing the user made, which can be nearly invisible in the first "
+        f"image when drawn over text. Any <<SKETCH>> bbox you give is in page "
+        f"fractions and both images share the same canvas. If the page is an "
+        f"unfinished draft or has no request for you, reply with exactly "
+        f"{WAIT_SENTINEL} and nothing else. Otherwise respond per your instructions.")
+    manifest = _sketch_manifest(sketches)
+    if manifest:
+        prompt += "\n\n" + manifest
     return _run_claude(prompt, resume)
+
+
+def _render_strokes(page_bytes: bytes, strokes_png: Path, full_png: Path,
+                    nb: R.Doc) -> Path:
+    """Render the ink-only view of a page (typed text removed). Falls back to the
+    full render on failure so the turn still proceeds (degraded: a drawing over text
+    may be missed, but nothing breaks)."""
+    from render import rm_bytes_to_strokes_png
+    try:
+        return rm_bytes_to_strokes_png(page_bytes, strokes_png)
+    except Exception as exc:
+        print(f"{nb.visible_name!r}: strokes-only render failed ({exc}) — "
+              "using full render for this turn.")
+        return full_png
 
 
 def prime_session(summary_text: str) -> str:
@@ -123,16 +162,51 @@ def prime_session(summary_text: str) -> str:
     return _run_claude(prompt).get("session_id")
 
 
-def _deliver(nb: R.Doc, reply: str) -> str:
+def _capture_sketches(nb: R.Doc, strokes_png: Path, reply: str, state: dict,
+                      page_uuid: str) -> str:
+    """Crop any `<<SKETCH …>>` regions the model flagged out of `strokes_png` (the
+    STROKES-ONLY page render — Claude's typed reply text removed, so an annotation
+    drawn over a reply yields a clean sketch), stash them under
+    renders/sketches/<uuid>/, record them in state["sketches"], and return the prose
+    with the SKETCH tags stripped (so they never reach the page). A crop failure
+    skips just that sketch."""
+    import sketch as S
+
+    prose, specs = S.parse_sketch(reply)
+    if not specs:
+        return prose
+    captured = state.setdefault("sketches", [])
+    next_id = max((int(s["id"]) for s in captured
+                   if str(s.get("id", "")).isdigit()), default=0) + 1
+    sk_dir = SKETCH_DIR / nb.uuid
+    sk_dir.mkdir(parents=True, exist_ok=True)
+    for spec in specs:
+        sid = str(next_id)
+        next_id += 1
+        out = sk_dir / f"{sid}.png"
+        try:
+            S.crop_page(strokes_png, spec.bbox, out)
+        except Exception as exc:
+            print(f"{nb.visible_name!r}: sketch {sid} crop failed ({exc}) — skipping.")
+            continue
+        captured.append({"id": sid, "caption": spec.caption,
+                         "file": str(out), "page_uuid": page_uuid})
+        print(f"{nb.visible_name!r}: captured sketch {sid} ({spec.caption!r}).")
+    return prose
+
+
+def _deliver(nb: R.Doc, reply: str, state: dict) -> str:
     """If the reply carries an `<<EMAIL>>…<<END>>` block, send it and return the
     page prose (block stripped). On send failure, append a short note to the prose
     so the device still shows a reply explaining the email didn't go out. Replies
-    with no email block pass through unchanged."""
+    with no email block pass through unchanged. Captured sketches the report
+    references are embedded by the mailer."""
     prose, spec = mailer.parse_email(reply)
     if spec is None:
         return reply
     try:
-        to = mailer.send_report(spec, to=EMAIL_TO, notebook_name=nb.visible_name)
+        to = mailer.send_report(spec, to=EMAIL_TO, notebook_name=nb.visible_name,
+                                sketches=state.get("sketches"))
         print(f"{nb.visible_name!r}: emailed report to {to}")
     except Exception as exc:
         detail = next((ln for ln in str(exc).splitlines() if ln.strip()),
@@ -168,7 +242,7 @@ def main() -> None:
 def process_notebook(nb: R.Doc) -> bool:
     """Run one turn for nb if its newest page is new input. Returns True if a reply
     was appended. Raises RateLimited if the backend is throttled."""
-    from render import rm_bytes_to_png
+    from render import rm_bytes_to_png, rm_bytes_to_strokes_png
 
     state = load_state(nb.uuid)
     if state.get("importing"):
@@ -200,9 +274,13 @@ def process_notebook(nb: R.Doc) -> bool:
     try:
         RENDER_DIR.mkdir(exist_ok=True)
         png = RENDER_DIR / f"{nb.uuid}.png"
-        rm_bytes_to_png(R.read_blob(page_hash), png)
+        strokes_png = RENDER_DIR / f"{nb.uuid}.strokes.png"
+        page_bytes = R.read_blob(page_hash)
+        rm_bytes_to_png(page_bytes, png)                 # full page: read annotations
+        strokes_png = _render_strokes(page_bytes, strokes_png, png, nb)  # ink only
 
-        result = call_claude(png, state.get("session_id"))
+        result = call_claude(png, strokes_png, state.get("session_id"),
+                             sketches=state.get("sketches"))
         reply = result.get("result", "").strip()
 
         # The page isn't a request yet (unfinished draft, or no ask) — don't reply.
@@ -216,7 +294,8 @@ def process_notebook(nb: R.Doc) -> bool:
 
         print("\n----- reply -----\n" + reply + "\n-----------------")
 
-        prose = _deliver(nb, reply)
+        prose = _capture_sketches(nb, strokes_png, reply, state, page_uuid)
+        prose = _deliver(nb, prose, state)
         W.append_page(nb.uuid, prose, folder=CLAUDE_FOLDER,
                       visible_name=nb.visible_name, model_label=MODEL_LABEL)
 
@@ -293,9 +372,13 @@ def _retry_pending(nb: R.Doc, state: dict) -> bool:
     try:
         RENDER_DIR.mkdir(exist_ok=True)
         png = RENDER_DIR / f"{nb.uuid}.png"
-        rm_bytes_to_png(R.read_blob(source_hash), png)
+        strokes_png = RENDER_DIR / f"{nb.uuid}.strokes.png"
+        page_bytes = R.read_blob(source_hash)
+        rm_bytes_to_png(page_bytes, png)
+        strokes_png = _render_strokes(page_bytes, strokes_png, png, nb)
 
-        result = call_claude(png, state.get("session_id"))
+        result = call_claude(png, strokes_png, state.get("session_id"),
+                             sketches=state.get("sketches"))
         reply = result.get("result", "").strip()
 
         # The rate-limit may have fired on a page that was only a mid-edit draft.
@@ -309,7 +392,8 @@ def _retry_pending(nb: R.Doc, state: dict) -> bool:
             return False
 
         print("\n----- reply -----\n" + reply + "\n-----------------")
-        prose = _deliver(nb, reply)
+        prose = _capture_sketches(nb, strokes_png, reply, state, source_uuid)
+        prose = _deliver(nb, prose, state)
         W.replace_page(nb.uuid, placeholder, prose, folder=CLAUDE_FOLDER,
                        visible_name=nb.visible_name, model_label=MODEL_LABEL)
         state["session_id"] = result.get("session_id")

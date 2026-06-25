@@ -19,12 +19,14 @@ means implicit TLS (SMTP_SSL), anything else (e.g. 587) uses STARTTLS.
 """
 from __future__ import annotations
 
+import base64
 import datetime
 import logging
 import re
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
+from pathlib import Path
 
 import config
 
@@ -35,6 +37,11 @@ _EMAIL_RE = re.compile(r"<<\s*EMAIL([^>]*)>>(.*?)<<\s*END\s*>>",
 # Fallback if the model forgets <<END>>: take everything after <<EMAIL…>>.
 _EMAIL_OPEN_RE = re.compile(r"<<\s*EMAIL([^>]*)>>(.*)\Z", re.IGNORECASE | re.DOTALL)
 _SUBJECT_RE = re.compile(r'subject\s*=\s*"([^"]*)"', re.IGNORECASE)
+
+# A captured sketch the model chose to place in the report: `![caption](sketch:ID)`.
+# We substitute the cropped image — a self-contained data URI in the markdown source
+# (so the .md renders standalone) and a cid: reference in the HTML alternative.
+_SKETCH_MARK_RE = re.compile(r"!\[([^\]]*)\]\(\s*sketch:([A-Za-z0-9_-]+)\s*\)")
 
 
 @dataclass
@@ -72,27 +79,91 @@ def _markdown_to_html(md: str) -> str:
             f"<body>{body}</body></html>")
 
 
+def _load_sketches(sketches) -> dict[str, dict]:
+    """Normalize the caller's sketch asset list into {id: {caption, png_bytes}}.
+    Each asset is a mapping with `id`, `caption`, and `path` (a readable PNG).
+    Unreadable/missing files are dropped with a warning (never block delivery)."""
+    out: dict[str, dict] = {}
+    for a in sketches or []:
+        sid, path = str(a.get("id")), (a.get("path") or a.get("file"))
+        try:
+            data = Path(path).read_bytes()
+        except Exception as e:
+            log.warning("sketch %s: cannot read %r (%s) — skipping", sid, path, e)
+            continue
+        out[sid] = {"caption": a.get("caption") or "", "png_bytes": data}
+    return out
+
+
+def _resolve_sketches(body_md: str, assets: dict[str, dict]) -> tuple[str, str, list[str]]:
+    """Rewrite every `![caption](sketch:ID)` marker in `body_md` for both renderings.
+    Returns (markdown_source, markdown_for_html, used_ids):
+      - markdown_source : marker -> self-contained `data:image/png;base64,…` image
+                          (for text/plain and the report.md attachment).
+      - markdown_for_html: marker -> `cid:sketch-ID` image (resolved by add_related).
+    A marker whose ID has no asset is replaced by its plain alt text (logged)."""
+    used: list[str] = []
+
+    def src_sub(m: re.Match) -> str:
+        alt, sid = m.group(1), m.group(2)
+        a = assets.get(sid)
+        if a is None:
+            log.warning("sketch marker references unknown id %r — dropping image", sid)
+            return alt
+        b64 = base64.b64encode(a["png_bytes"]).decode("ascii")
+        return f"![{alt}](data:image/png;base64,{b64})"
+
+    def html_sub(m: re.Match) -> str:
+        alt, sid = m.group(1), m.group(2)
+        if sid not in assets:
+            return alt
+        if sid not in used:
+            used.append(sid)
+        return f"![{alt}](cid:sketch-{sid})"
+
+    md_source = _SKETCH_MARK_RE.sub(src_sub, body_md)
+    md_html = _SKETCH_MARK_RE.sub(html_sub, body_md)
+    return md_source, md_html, used
+
+
 def build_message(spec: EmailSpec, *, to: str, notebook_name: str | None = None,
-                  when: datetime.datetime | None = None) -> EmailMessage:
+                  when: datetime.datetime | None = None,
+                  sketches=None) -> EmailMessage:
     """Assemble the multipart/mixed message (plain + html alternatives, plus a
-    report.md attachment). Does not send — used by send_report and the dry-run."""
+    report.md attachment). Does not send — used by send_report and the dry-run.
+
+    `sketches` is an optional list of asset mappings ({id, caption, path}); any that
+    the report references via a `![caption](sketch:ID)` marker are rendered inline
+    (data URI in the markdown, cid: in the HTML) and attached as `sketch-<id>.png`.
+    Unreferenced sketches are NOT included — relevance is the model's call."""
     when = when or datetime.datetime.now()
     subject = spec.subject or (
         f"{notebook_name or 'reclaudable'} — report ({when:%Y-%m-%d})")
+
+    assets = _load_sketches(sketches)
+    md_source, md_html, used = _resolve_sketches(spec.body_md, assets)
 
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = config.SMTP_FROM
     msg["To"] = to
-    msg.set_content(spec.body_md)                              # text/plain
-    msg.add_alternative(_markdown_to_html(spec.body_md), subtype="html")
-    msg.add_attachment(spec.body_md.encode("utf-8"), maintype="text",
+    msg.set_content(md_source)                                 # text/plain
+    msg.add_alternative(_markdown_to_html(md_html), subtype="html")
+    # Inline images live in a multipart/related wrapping the HTML alternative.
+    html_part = msg.get_payload()[1]
+    for sid in used:
+        html_part.add_related(assets[sid]["png_bytes"], maintype="image",
+                              subtype="png", cid=f"<sketch-{sid}>")
+    msg.add_attachment(md_source.encode("utf-8"), maintype="text",
                        subtype="markdown", filename="report.md")
+    for sid in used:                                           # clean original PNGs
+        msg.add_attachment(assets[sid]["png_bytes"], maintype="image",
+                          subtype="png", filename=f"sketch-{sid}.png")
     return msg
 
 
 def send_report(spec: EmailSpec, *, to: str | None = None,
-                notebook_name: str | None = None) -> str:
+                notebook_name: str | None = None, sketches=None) -> str:
     """Build and send the report email. Returns the recipient address on success;
     raises on misconfiguration or SMTP failure (the caller surfaces that on-page)."""
     to = to or config.EMAIL_TO
@@ -101,7 +172,7 @@ def send_report(spec: EmailSpec, *, to: str | None = None,
     if not to:
         raise RuntimeError("no recipient — set RECLAUDABLE_EMAIL_TO in .env")
 
-    msg = build_message(spec, to=to, notebook_name=notebook_name)
+    msg = build_message(spec, to=to, notebook_name=notebook_name, sketches=sketches)
     host, _, port_s = config.SMTP_SERVER.partition(":")
     port = int(port_s) if port_s else 465
     if port == 465:
@@ -121,6 +192,10 @@ _SELFTEST_MD = """# Test report
 
 This is a **reclaudable** self-test report.
 
+Here is the sketch the user drew:
+
+![auth flow](sketch:1)
+
 ## A list
 - one
 - two
@@ -131,9 +206,15 @@ This is a **reclaudable** self-test report.
 | a   | 1     |
 """
 
+# A 1x1 PNG, base64-encoded — stands in for a real crop in the dry-run.
+_SELFTEST_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9"
+    "awAAAABJRU5ErkJggg==")
+
 
 def main() -> None:
     import argparse
+    import tempfile
     ap = argparse.ArgumentParser(description="reclaudable mailer self-test")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the assembled MIME message, don't send")
@@ -142,11 +223,14 @@ def main() -> None:
     args = ap.parse_args()
 
     spec = EmailSpec(body_md=_SELFTEST_MD, subject="reclaudable self-test")
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+        tf.write(_SELFTEST_PNG)
+        sketches = [{"id": "1", "caption": "auth flow", "path": tf.name}]
     if args.send:
-        print(f"sent to {send_report(spec, notebook_name='selftest')}")
+        print(f"sent to {send_report(spec, notebook_name='selftest', sketches=sketches)}")
     else:   # default: dry-run
         print(build_message(spec, to=config.EMAIL_TO or "you@example.com",
-                            notebook_name="selftest"))
+                            notebook_name="selftest", sketches=sketches))
 
 
 if __name__ == "__main__":
